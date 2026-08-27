@@ -20,7 +20,7 @@
     "test:unit": "vitest run --config ./vitest.config.unit.ts --no-file-parallelism",
     "test:integration": "vitest run --config ./vitest.config.integration.ts --no-file-parallelism",
     "test:watch": "vitest",
-    "test:cov": "vitest run --coverage",
+    "test:cov": "vitest run --config ./vitest.config.unit.ts --no-file-parallelism --coverage",
     "test:debug": "vitest --inspect-brk --no-file-parallelism",
     "test:e2e": "vitest run --config ./vitest.config.e2e.ts --no-file-parallelism",
     "test:all": "npm run test:unit && npm run test:integration && npm run test:e2e",

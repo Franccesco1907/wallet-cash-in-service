@@ -58,6 +58,7 @@ export interface CashInStorePort {
   recordProviderEvent(
     input: ProviderEventInput,
   ): Promise<ProviderEventDecision>;
+  markProviderEventProcessed(eventId: string): Promise<void>;
 }
 
 export const CASH_IN_STORE = Symbol('CASH_IN_STORE');

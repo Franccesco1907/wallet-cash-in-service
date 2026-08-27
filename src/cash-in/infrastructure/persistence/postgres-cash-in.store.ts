@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { randomUUID } from 'node:crypto';
+import { withTransientTransactionRetry } from '../../../database/transaction-retry.js';
 import {
   OPERATION_STATE,
   type OperationState,
@@ -103,70 +104,74 @@ export class PostgresCashInStore implements CashInStorePort {
     operationId: string,
     providerPaymentId: string,
   ): Promise<CompletionResult> {
-    return this.dataSource.transaction(async (manager) => {
-      const operationRows = await manager.query<OperationRow[]>(
-        'SELECT * FROM cash_in_operations WHERE operation_id=$1 FOR UPDATE',
-        [operationId],
-      );
-      const row = operationRows[0];
-      if (!row) throw new Error('Cash-in operation not found');
-      if (row.status === OPERATION_STATE.COMPLETED) {
-        return {
-          operation: mapOperation(row),
-          resultingBalanceMinor: BigInt(row.completed_balance_minor ?? '0'),
-        };
-      }
-      await manager.query(
-        `INSERT INTO wallet_ledger
+    return withTransientTransactionRetry(() =>
+      this.dataSource.transaction(async (manager) => {
+        const operationRows = await manager.query<OperationRow[]>(
+          'SELECT * FROM cash_in_operations WHERE operation_id=$1 FOR UPDATE',
+          [operationId],
+        );
+        const row = operationRows[0];
+        if (!row) throw new Error('Cash-in operation not found');
+        if (row.status === OPERATION_STATE.COMPLETED) {
+          return {
+            operation: mapOperation(row),
+            resultingBalanceMinor: BigInt(row.completed_balance_minor ?? '0'),
+          };
+        }
+        await manager.query(
+          `INSERT INTO wallet_ledger
          (ledger_id, operation_id, user_id, currency, amount_minor, resulting_balance_minor)
          VALUES ($1,$2,$3,$4,$5,0)
          ON CONFLICT (operation_id) DO NOTHING`,
-        [
-          randomUUID(),
-          row.operation_id,
-          row.user_id,
-          row.currency,
-          row.amount_minor,
-        ],
-      );
-      await manager.query(
-        `INSERT INTO wallets (user_id, currency, balance_minor)
+          [
+            randomUUID(),
+            row.operation_id,
+            row.user_id,
+            row.currency,
+            row.amount_minor,
+          ],
+        );
+        await manager.query(
+          `INSERT INTO wallets (user_id, currency, balance_minor)
          VALUES ($1,$2,$3)
          ON CONFLICT (user_id, currency) DO UPDATE
            SET balance_minor = wallets.balance_minor + EXCLUDED.balance_minor,
                updated_at = now()
         `,
-        [row.user_id, row.currency, row.amount_minor],
-      );
-      const walletRows = await manager.query<Array<{ balance_minor: string }>>(
-        'SELECT balance_minor FROM wallets WHERE user_id=$1 AND currency=$2',
-        [row.user_id, row.currency],
-      );
-      const balance = BigInt(walletRows[0]?.balance_minor ?? '0');
-      await manager.query(
-        'UPDATE wallet_ledger SET resulting_balance_minor=$2 WHERE operation_id=$1',
-        [operationId, balance.toString()],
-      );
-      await manager.query(
-        `UPDATE cash_in_operations
+          [row.user_id, row.currency, row.amount_minor],
+        );
+        const walletRows = await manager.query<
+          Array<{ balance_minor: string }>
+        >(
+          'SELECT balance_minor FROM wallets WHERE user_id=$1 AND currency=$2',
+          [row.user_id, row.currency],
+        );
+        const balance = BigInt(walletRows[0]?.balance_minor ?? '0');
+        await manager.query(
+          'UPDATE wallet_ledger SET resulting_balance_minor=$2 WHERE operation_id=$1',
+          [operationId, balance.toString()],
+        );
+        await manager.query(
+          `UPDATE cash_in_operations
          SET status=$2, provider_payment_id=$3, completed_balance_minor=$4, updated_at=now()
          WHERE operation_id=$1`,
-        [
-          operationId,
-          OPERATION_STATE.COMPLETED,
-          providerPaymentId,
-          balance.toString(),
-        ],
-      );
-      const completedRows = await manager.query<OperationRow[]>(
-        'SELECT * FROM cash_in_operations WHERE operation_id=$1',
-        [operationId],
-      );
-      return {
-        operation: mapOperation(completedRows[0]!),
-        resultingBalanceMinor: balance,
-      };
-    });
+          [
+            operationId,
+            OPERATION_STATE.COMPLETED,
+            providerPaymentId,
+            balance.toString(),
+          ],
+        );
+        const completedRows = await manager.query<OperationRow[]>(
+          'SELECT * FROM cash_in_operations WHERE operation_id=$1',
+          [operationId],
+        );
+        return {
+          operation: mapOperation(completedRows[0]!),
+          resultingBalanceMinor: balance,
+        };
+      }),
+    );
   }
 
   async markFailed(operationId: string, failureCode: string): Promise<void> {
@@ -202,11 +207,17 @@ export class PostgresCashInStore implements CashInStorePort {
       await manager.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
         input.eventId,
       ]);
-      const duplicates = await manager.query<Array<{ exists: boolean }>>(
-        'SELECT EXISTS(SELECT 1 FROM provider_events WHERE provider_event_id=$1) AS exists',
+      const duplicates = await manager.query<
+        Array<{ processing_status: string }>
+      >(
+        'SELECT processing_status FROM provider_events WHERE provider_event_id=$1',
         [input.eventId],
       );
-      if (duplicates[0]?.exists) return PROVIDER_EVENT_DECISION.DUPLICATE;
+      if (duplicates[0]) {
+        return duplicates[0].processing_status === 'RECEIVED'
+          ? PROVIDER_EVENT_DECISION.PROCESS
+          : PROVIDER_EVENT_DECISION.DUPLICATE;
+      }
 
       const operations = await manager.query<
         Array<{ provider_event_sequence: string }>
@@ -222,8 +233,8 @@ export class PostgresCashInStore implements CashInStorePort {
       await manager.query(
         `INSERT INTO provider_events
          (provider_event_id, operation_id, event_type, event_sequence, payload_hash,
-          processing_status, processed_at)
-         VALUES ($1,$2,$3,$4,$5,$6,now())`,
+          processing_status)
+         VALUES ($1,$2,$3,$4,$5,$6)`,
         [
           input.eventId,
           input.operationId,
@@ -231,7 +242,7 @@ export class PostgresCashInStore implements CashInStorePort {
           input.sequence.toString(),
           input.payloadHash,
           decision === PROVIDER_EVENT_DECISION.PROCESS
-            ? 'PROCESSED'
+            ? 'RECEIVED'
             : 'IGNORED_OLD',
         ],
       );
@@ -243,6 +254,15 @@ export class PostgresCashInStore implements CashInStorePort {
       }
       return decision;
     });
+  }
+
+  async markProviderEventProcessed(eventId: string): Promise<void> {
+    await this.dataSource.query(
+      `UPDATE provider_events
+       SET processing_status='PROCESSED', processed_at=now()
+       WHERE provider_event_id=$1 AND processing_status='RECEIVED'`,
+      [eventId],
+    );
   }
 
   private async findByIdempotencyKey(

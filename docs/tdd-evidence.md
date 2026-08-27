@@ -1,66 +1,84 @@
 # TDD Evidence
 
-This log contains commands and outcomes observed during implementation. Values that could expose credentials or business tokens are intentionally omitted.
+Observed commands and outcomes from implementation. Sensitive values are omitted.
 
-## WU-1: Reproducible PostgreSQL foundation
+## WU-1: PostgreSQL foundation
 
-- RED: `npm run test:integration -- test/database-schema.integration.spec.ts` -> exit `1`; `applies the initial migration with the required financial constraints` received an empty constraint list.
-- GREEN: the focused command -> `1/1` passed after the explicit migration created the four required constraints.
-- REFACTOR: migration up/down/up plus the focused command -> `1/1` passed; configuration parsing is shared by the CLI data source.
-- Runtime: `docker compose -f compose.test.yaml up -d --wait` -> PostgreSQL 17.6 became healthy; migration up/down/up succeeded.
-- Rollback: remove the database/config/test harness and revert dependency/script changes.
-- Commit: pending.
-
-## WU-7: Authenticated, durable, duplicate-safe webhooks
-
-- RED: `npm run test:e2e -- test/payment-webhook.e2e-spec.ts` -> exit `1`; controllable delayed-provider and webhook behavior did not exist.
-- GREEN: focused e2e -> `1/1` passed; duplicate delivery produced one event row for that ID, old event was retained as ignored, and wallet credit occurred once.
-- REFACTOR: integration suite, lint, build, and focused rerun -> green; HMAC verification remains provider-specific and both confirmation paths share `finalizeCompleted`.
-- Runtime: signed success was delivered twice before delayed provider response, followed by an old event and invalid signature.
-- Rollback: remove webhook DTO/controller/verifier/inbox handling and delayed fake behavior; synchronous flow remains.
-- Commit: pending.
-
-## WU-6: Unknown provider outcome and safe retry
-
-- RED: `npm run test:e2e -- test/cash-in-timeout.e2e-spec.ts` -> exit `1`; timeout remained `payment_requested` instead of `awaiting_confirmation`.
-- GREEN: focused e2e -> `1/1` passed with stable `AWAITING_CONFIRMATION`, one provider attempt, and no ledger.
-- REFACTOR: unit suite, lint, build, and focused rerun -> green; provider result translation remains behind the provider port.
-- Runtime: retry returned the same operation/provider key, one provider attempt, and zero ledger rows.
-- Rollback: remove unknown-result transition while retaining confirmed success/failure flows.
-- Commit: pending.
-
-## WU-5: Confirmed rejection and idempotency conflict
-
-- RED: `npm run test:e2e -- test/cash-in-failure.e2e-spec.ts` -> exit `1`; confirmed rejection remained `202` instead of stable terminal `422` while conflict already passed.
-- GREEN: focused e2e -> `2/2` passed; rejection replayed `PAYMENT_DECLINED`, conflict returned `409`, and provider calls remained one.
-- REFACTOR: unit suite, lint, build, and focused rerun -> green; public errors expose stable codes rather than provider details.
-- Runtime: e2e asserted one provider call and zero ledger rows for rejection/conflict paths.
-- Rollback: remove rejection state/result mapping while preserving success and arbitration.
-- Commit: pending.
-
-## WU-4: Atomic successful finalization
-
-- RED: `npm run test:e2e -- test/cash-in-success.e2e-spec.ts` -> exit `1`; success returned `202` instead of `200` and produced no wallet credit.
-- GREEN: focused e2e -> `1/1` passed with one ledger row, `10000` minor-unit balance, and replayed `200` response.
-- REFACTOR: integration suite, lint, build, and focused rerun -> green; shared typed completion result and transaction-scoped manager retained.
-- Runtime: the e2e scenario repeats the request and inspects PostgreSQL ledger and wallet rows.
-- Rollback: remove success result mapping and `finalizeCompleted`; retain arbitration and schema.
-- Commit: pending.
-
-## WU-3: HTTP boundary and multi-pod idempotency arbitration
-
-- RED: `npm run test:e2e -- test/cash-in-idempotency.e2e-spec.ts` -> exit `1`; five independent app instances shared one operation but made `5` provider calls instead of `1`.
-- GREEN: focused e2e -> `2/2` passed after only the PostgreSQL insert winner was allowed to charge.
-- REFACTOR: unit suite, lint, build, and focused rerun -> green; header validation and HTTP mapping remain presentation concerns.
-- Runtime: five Nest application instances shared PostgreSQL and received the same UUID key concurrently.
-- Rollback: remove the Cash-In module, HTTP boundary, ports, adapters, correlation context, and e2e helper while retaining WU-1/WU-2.
-- Commit: pending.
+- RED: `npm run test:integration -- test/database-schema.integration.spec.ts` -> exit `1`; required constraint list was empty.
+- GREEN: same command -> `1/1` passed after the explicit migration.
+- REFACTOR: migration up/down/up and focused rerun -> `1/1` passed; configuration parsing is shared.
+- Runtime: PostgreSQL 17.6 became healthy through Compose.
+- Rollback: database/config/test harness only.
+- Commit: `f462d58`.
 
 ## WU-2: Domain invariants
 
-- RED: `npm run test:unit -- src/cash-in/domain/operation-state.policy.spec.ts src/cash-in/domain/request-fingerprint.spec.ts` -> exit `1`; terminal transition, invalid-money, and canonical fingerprint expectations failed (`5` failed, `5` passed).
-- GREEN: the focused command -> `10/10` passed after exact decimal parsing, fixed-field SHA-256 serialization, and state transition rules were implemented.
-- REFACTOR: full unit suite plus focused rerun -> `11/11` and `10/10` passed; domain types remain flat and persistence-free.
-- Runtime: N/A; this unit contains pure domain functions with no runtime boundary.
-- Rollback: remove `src/cash-in/domain` without affecting the database foundation.
-- Commit: pending.
+- RED: focused state/fingerprint command -> exit `1`; `5` failed and `5` passed for terminal transition, invalid money, and canonical serialization.
+- GREEN: same command -> `10/10` passed.
+- REFACTOR: full unit plus focused rerun -> `11/11` and `10/10` passed at that work-unit boundary.
+- Runtime: N/A; pure domain behavior.
+- Rollback: `src/cash-in/domain`.
+- Commit: `f634994`.
+
+## WU-3: HTTP and multi-pod arbitration
+
+- RED: focused idempotency e2e -> exit `1`; five independent app instances shared one operation but made `5` provider calls.
+- GREEN: same command -> `2/2` passed after only the PostgreSQL insert winner could charge.
+- REFACTOR: unit, lint, build, focused rerun -> green.
+- Runtime: five Nest instances shared PostgreSQL and one UUID key concurrently.
+- Rollback: Cash-In HTTP/module/ports/adapters/correlation behavior.
+- Commit: `10e048a`.
+
+## WU-4: Atomic success
+
+- RED: focused success e2e -> exit `1`; returned `202` instead of `200` and no credit.
+- GREEN: same command -> `1/1` passed with one ledger row, `10000` balance, and replay.
+- REFACTOR: integration, lint, build, focused rerun -> green.
+- Runtime: repeated request plus direct ledger/wallet assertions.
+- Rollback: success orchestration and finalizer.
+- Commit: `dec3945`.
+
+## WU-5: Rejection and conflict
+
+- RED: focused failure e2e -> exit `1`; confirmed rejection remained `202`; conflict already passed.
+- GREEN: same command -> `2/2` passed with stable `PAYMENT_DECLINED`, `409` conflict, one provider call, and no ledger.
+- REFACTOR: unit, lint, build, focused rerun -> green.
+- Runtime: rejection replay and conflict were exercised through HTTP and PostgreSQL.
+- Rollback: rejection/conflict mapping.
+- Commit: `42f3deb`.
+
+## WU-6: Unknown outcome
+
+- RED: focused timeout e2e -> exit `1`; status remained `payment_requested`.
+- GREEN: same command -> `1/1` passed with stable `AWAITING_CONFIRMATION`, one attempt, and no ledger.
+- REFACTOR: unit, lint, build, focused rerun -> green.
+- Runtime: client retry observed the same operation/provider key.
+- Rollback: uncertain-result transition.
+- Commit: `6b82c30`.
+
+## WU-7: Webhooks
+
+- RED: focused webhook e2e -> exit `1`; controllable delayed-provider/webhook behavior did not exist.
+- GREEN: same command -> `1/1` passed; duplicate delivery credited once, old event was ignored, invalid HMAC was rejected, and late success was a no-op.
+- REFACTOR: integration, lint, build, focused rerun -> green.
+- Runtime: signed success arrived twice before the delayed provider response.
+- Rollback: webhook controller/DTO/verifier/inbox/delayed fake.
+- Commit: `26db310`.
+
+## WU-8: Concurrency and delivery
+
+- RED: the exact two-credit scenario initially passed because WU-4 already used the required atomic upsert. A bounded transient-retry scenario was then added and the focused integration command exited `1` on simulated `40P01` (`1` failed, `1` passed). This sequencing deviation is explicit rather than inventing a failure.
+- GREEN: focused integration -> `2/2` passed after one bounded retry was implemented.
+- REFACTOR: formatter/check, lint, build, unit `10/10`, integration `3/3`, e2e `7/7`, and focused rerun all passed.
+- Runtime: two operations finalized concurrently to balance `3000` with both ledger IDs.
+- Rollback: bounded retry and reviewer-documentation refinement.
+- Commit: this work-unit commit; see Git history.
+
+## Final verification
+
+- Empty database migration: up/down/up succeeded.
+- Unit: `2` files, `10` tests passed.
+- Integration: `2` files, `3` tests passed.
+- E2E: `5` files, `7` tests passed.
+- Coverage: statements `100%`, branches `88.88%`, functions `100%`, lines `100%` for the unit-test scope.
+- Formatting, lint, build, and `git diff --check`: passed.

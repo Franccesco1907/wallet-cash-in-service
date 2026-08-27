@@ -1,5 +1,5 @@
-import { ConflictException, Inject, Injectable } from '@nestjs/common';
-import { randomUUID } from 'node:crypto';
+import { ConflictException, Inject, Injectable, Logger } from '@nestjs/common';
+import { createHash, randomUUID } from 'node:crypto';
 import { decimalToMinorUnits, normalizeCurrency } from '../domain/money.js';
 import { requestFingerprint } from '../domain/request-fingerprint.js';
 import { CorrelationContext } from '../../shared/observability/correlation-context.js';
@@ -46,6 +46,8 @@ export interface PaymentWebhookCommand {
 
 @Injectable()
 export class CashInService {
+  private readonly logger = new Logger(CashInService.name);
+
   constructor(
     @Inject(CASH_IN_STORE) private readonly store: CashInStorePort,
     @Inject(PAYMENT_PROVIDER) private readonly provider: PaymentProviderPort,
@@ -76,6 +78,15 @@ export class CashInService {
         'Idempotency key is already used for another request',
       );
     }
+    this.logger.log({
+      event: claim.authorized ? 'cash_in_claimed' : 'cash_in_replayed',
+      operation_id: claim.operation.operationId,
+      correlation_id: this.correlation.getId(),
+      idempotency_key_hash: createHash('sha256')
+        .update(command.idempotencyKey)
+        .digest('hex')
+        .slice(0, 16),
+    });
     if (claim.authorized) {
       await this.store.markPaymentRequested(claim.operation.operationId);
       const result = await this.provider.charge({
@@ -137,6 +148,7 @@ export class CashInService {
         command.operationId,
         command.providerPaymentId,
       );
+      await this.store.markProviderEventProcessed(command.eventId);
     }
   }
 }
