@@ -10,3 +10,12 @@ This log contains commands and outcomes observed during implementation. Values t
 - Runtime: `docker compose -f compose.test.yaml up -d --wait` -> PostgreSQL 17.6 became healthy; migration up/down/up succeeded.
 - Rollback: remove the database/config/test harness and revert dependency/script changes.
 - Commit: pending.
+
+## WU-2: Domain invariants
+
+- RED: `npm run test:unit -- src/cash-in/domain/operation-state.policy.spec.ts src/cash-in/domain/request-fingerprint.spec.ts` -> exit `1`; terminal transition, invalid-money, and canonical fingerprint expectations failed (`5` failed, `5` passed).
+- GREEN: the focused command -> `10/10` passed after exact decimal parsing, fixed-field SHA-256 serialization, and state transition rules were implemented.
+- REFACTOR: full unit suite plus focused rerun -> `11/11` and `10/10` passed; domain types remain flat and persistence-free.
+- Runtime: N/A; this unit contains pure domain functions with no runtime boundary.
+- Rollback: remove `src/cash-in/domain` without affecting the database foundation.
+- Commit: pending.
