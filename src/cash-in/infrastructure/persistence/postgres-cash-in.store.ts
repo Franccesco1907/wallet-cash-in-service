@@ -166,6 +166,20 @@ export class PostgresCashInStore implements CashInStorePort {
     });
   }
 
+  async markFailed(operationId: string, failureCode: string): Promise<void> {
+    await this.dataSource.query(
+      `UPDATE cash_in_operations
+       SET status=$2, failure_code=$3, updated_at=now()
+       WHERE operation_id=$1 AND status=$4`,
+      [
+        operationId,
+        OPERATION_STATE.FAILED,
+        failureCode,
+        OPERATION_STATE.PAYMENT_REQUESTED,
+      ],
+    );
+  }
+
   private async findByIdempotencyKey(
     key: string,
   ): Promise<CashInOperation | null> {

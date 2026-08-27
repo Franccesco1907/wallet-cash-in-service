@@ -81,6 +81,11 @@ export class CashInService {
           claim.operation.operationId,
           result.providerPaymentId,
         );
+      } else if (result.kind === PROVIDER_RESULT.REJECTED) {
+        await this.store.markFailed(
+          claim.operation.operationId,
+          result.failureCode ?? 'PAYMENT_DECLINED',
+        );
       }
     }
     const operation =
@@ -94,8 +99,15 @@ export class CashInService {
     if (operation.completedBalanceMinor !== null) {
       response.new_balance = Number(operation.completedBalanceMinor) / 100;
     }
+    if (operation.failureCode !== null)
+      response.error_code = operation.failureCode;
     return {
-      httpStatus: operation.status === 'COMPLETED' ? 200 : 202,
+      httpStatus:
+        operation.status === 'COMPLETED'
+          ? 200
+          : operation.status === 'FAILED'
+            ? 422
+            : 202,
       response,
     };
   }

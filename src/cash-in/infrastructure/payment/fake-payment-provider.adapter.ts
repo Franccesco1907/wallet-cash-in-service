@@ -27,6 +27,13 @@ export class FakePaymentProvider implements PaymentProviderPort {
         failureCode: null,
       };
     }
+    if (input.paymentMethod === 'fake_decline') {
+      return {
+        kind: PROVIDER_RESULT.REJECTED,
+        providerPaymentId: `pay_${input.operationId}`,
+        failureCode: 'PAYMENT_DECLINED',
+      };
+    }
     return {
       kind: PROVIDER_RESULT.UNKNOWN,
       providerPaymentId: `pay_${input.operationId}`,

@@ -11,6 +11,15 @@ This log contains commands and outcomes observed during implementation. Values t
 - Rollback: remove the database/config/test harness and revert dependency/script changes.
 - Commit: pending.
 
+## WU-5: Confirmed rejection and idempotency conflict
+
+- RED: `npm run test:e2e -- test/cash-in-failure.e2e-spec.ts` -> exit `1`; confirmed rejection remained `202` instead of stable terminal `422` while conflict already passed.
+- GREEN: focused e2e -> `2/2` passed; rejection replayed `PAYMENT_DECLINED`, conflict returned `409`, and provider calls remained one.
+- REFACTOR: unit suite, lint, build, and focused rerun -> green; public errors expose stable codes rather than provider details.
+- Runtime: e2e asserted one provider call and zero ledger rows for rejection/conflict paths.
+- Rollback: remove rejection state/result mapping while preserving success and arbitration.
+- Commit: pending.
+
 ## WU-4: Atomic successful finalization
 
 - RED: `npm run test:e2e -- test/cash-in-success.e2e-spec.ts` -> exit `1`; success returned `202` instead of `200` and produced no wallet credit.
