@@ -37,6 +37,7 @@ export interface CashInStorePort {
     providerPaymentId: string,
   ): Promise<CompletionResult>;
   markFailed(operationId: string, failureCode: string): Promise<void>;
+  markAwaitingConfirmation(operationId: string): Promise<void>;
 }
 
 export const CASH_IN_STORE = Symbol('CASH_IN_STORE');

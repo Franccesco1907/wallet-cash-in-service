@@ -11,6 +11,15 @@ This log contains commands and outcomes observed during implementation. Values t
 - Rollback: remove the database/config/test harness and revert dependency/script changes.
 - Commit: pending.
 
+## WU-6: Unknown provider outcome and safe retry
+
+- RED: `npm run test:e2e -- test/cash-in-timeout.e2e-spec.ts` -> exit `1`; timeout remained `payment_requested` instead of `awaiting_confirmation`.
+- GREEN: focused e2e -> `1/1` passed with stable `AWAITING_CONFIRMATION`, one provider attempt, and no ledger.
+- REFACTOR: unit suite, lint, build, and focused rerun -> green; provider result translation remains behind the provider port.
+- Runtime: retry returned the same operation/provider key, one provider attempt, and zero ledger rows.
+- Rollback: remove unknown-result transition while retaining confirmed success/failure flows.
+- Commit: pending.
+
 ## WU-5: Confirmed rejection and idempotency conflict
 
 - RED: `npm run test:e2e -- test/cash-in-failure.e2e-spec.ts` -> exit `1`; confirmed rejection remained `202` instead of stable terminal `422` while conflict already passed.

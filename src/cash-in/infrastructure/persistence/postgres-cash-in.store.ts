@@ -180,6 +180,18 @@ export class PostgresCashInStore implements CashInStorePort {
     );
   }
 
+  async markAwaitingConfirmation(operationId: string): Promise<void> {
+    await this.dataSource.query(
+      `UPDATE cash_in_operations SET status=$2, updated_at=now()
+       WHERE operation_id=$1 AND status=$3`,
+      [
+        operationId,
+        OPERATION_STATE.AWAITING_CONFIRMATION,
+        OPERATION_STATE.PAYMENT_REQUESTED,
+      ],
+    );
+  }
+
   private async findByIdempotencyKey(
     key: string,
   ): Promise<CashInOperation | null> {

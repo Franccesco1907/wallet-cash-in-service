@@ -86,6 +86,8 @@ export class CashInService {
           claim.operation.operationId,
           result.failureCode ?? 'PAYMENT_DECLINED',
         );
+      } else {
+        await this.store.markAwaitingConfirmation(claim.operation.operationId);
       }
     }
     const operation =
