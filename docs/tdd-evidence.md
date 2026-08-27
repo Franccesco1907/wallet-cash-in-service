@@ -11,6 +11,15 @@ This log contains commands and outcomes observed during implementation. Values t
 - Rollback: remove the database/config/test harness and revert dependency/script changes.
 - Commit: pending.
 
+## WU-4: Atomic successful finalization
+
+- RED: `npm run test:e2e -- test/cash-in-success.e2e-spec.ts` -> exit `1`; success returned `202` instead of `200` and produced no wallet credit.
+- GREEN: focused e2e -> `1/1` passed with one ledger row, `10000` minor-unit balance, and replayed `200` response.
+- REFACTOR: integration suite, lint, build, and focused rerun -> green; shared typed completion result and transaction-scoped manager retained.
+- Runtime: the e2e scenario repeats the request and inspects PostgreSQL ledger and wallet rows.
+- Rollback: remove success result mapping and `finalizeCompleted`; retain arbitration and schema.
+- Commit: pending.
+
 ## WU-3: HTTP boundary and multi-pod idempotency arbitration
 
 - RED: `npm run test:e2e -- test/cash-in-idempotency.e2e-spec.ts` -> exit `1`; five independent app instances shared one operation but made `5` provider calls instead of `1`.

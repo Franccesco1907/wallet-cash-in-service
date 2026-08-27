@@ -23,10 +23,19 @@ export interface OperationClaim {
   authorized: boolean;
 }
 
+export interface CompletionResult {
+  operation: CashInOperation;
+  resultingBalanceMinor: bigint;
+}
+
 export interface CashInStorePort {
   createOrGet(input: CreateOperationInput): Promise<OperationClaim>;
   markPaymentRequested(operationId: string): Promise<void>;
   getById(operationId: string): Promise<CashInOperation | null>;
+  finalizeCompleted(
+    operationId: string,
+    providerPaymentId: string,
+  ): Promise<CompletionResult>;
 }
 
 export const CASH_IN_STORE = Symbol('CASH_IN_STORE');

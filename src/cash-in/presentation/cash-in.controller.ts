@@ -3,9 +3,10 @@ import {
   Body,
   Controller,
   Headers,
-  HttpCode,
   Post,
+  Res,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { IsUUID } from 'class-validator';
 import { validateSync } from 'class-validator';
 import {
@@ -24,10 +25,10 @@ export class CashInController {
   constructor(private readonly service: CashInService) {}
 
   @Post()
-  @HttpCode(202)
   async create(
     @Headers('idempotency-key') idempotencyKey: string | undefined,
     @Body() body: CreateCashInDto,
+    @Res({ passthrough: true }) response: Response,
   ): Promise<CashInResponse> {
     const header = Object.assign(new IdempotencyHeader(), {
       value: idempotencyKey,
@@ -35,12 +36,14 @@ export class CashInController {
     if (validateSync(header).length > 0) {
       throw new BadRequestException('Idempotency-Key must be a UUID');
     }
-    return this.service.execute({
+    const execution = await this.service.execute({
       idempotencyKey: header.value,
       userId: body.user_id,
       amount: String(body.amount),
       currency: body.currency,
       paymentMethod: body.payment_method,
     });
+    response.status(execution.httpStatus);
+    return execution.response;
   }
 }

@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
+import { randomUUID } from 'node:crypto';
 import {
   OPERATION_STATE,
   type OperationState,
@@ -8,6 +9,7 @@ import {
 import type {
   CashInOperation,
   CashInStorePort,
+  CompletionResult,
   CreateOperationInput,
   OperationClaim,
 } from '../../application/ports/cash-in-store.port.js';
@@ -92,6 +94,76 @@ export class PostgresCashInStore implements CashInStorePort {
       [operationId],
     );
     return rows[0] ? mapOperation(rows[0]) : null;
+  }
+
+  async finalizeCompleted(
+    operationId: string,
+    providerPaymentId: string,
+  ): Promise<CompletionResult> {
+    return this.dataSource.transaction(async (manager) => {
+      const operationRows = await manager.query<OperationRow[]>(
+        'SELECT * FROM cash_in_operations WHERE operation_id=$1 FOR UPDATE',
+        [operationId],
+      );
+      const row = operationRows[0];
+      if (!row) throw new Error('Cash-in operation not found');
+      if (row.status === OPERATION_STATE.COMPLETED) {
+        return {
+          operation: mapOperation(row),
+          resultingBalanceMinor: BigInt(row.completed_balance_minor ?? '0'),
+        };
+      }
+      await manager.query(
+        `INSERT INTO wallet_ledger
+         (ledger_id, operation_id, user_id, currency, amount_minor, resulting_balance_minor)
+         VALUES ($1,$2,$3,$4,$5,0)
+         ON CONFLICT (operation_id) DO NOTHING`,
+        [
+          randomUUID(),
+          row.operation_id,
+          row.user_id,
+          row.currency,
+          row.amount_minor,
+        ],
+      );
+      await manager.query(
+        `INSERT INTO wallets (user_id, currency, balance_minor)
+         VALUES ($1,$2,$3)
+         ON CONFLICT (user_id, currency) DO UPDATE
+           SET balance_minor = wallets.balance_minor + EXCLUDED.balance_minor,
+               updated_at = now()
+        `,
+        [row.user_id, row.currency, row.amount_minor],
+      );
+      const walletRows = await manager.query<Array<{ balance_minor: string }>>(
+        'SELECT balance_minor FROM wallets WHERE user_id=$1 AND currency=$2',
+        [row.user_id, row.currency],
+      );
+      const balance = BigInt(walletRows[0]?.balance_minor ?? '0');
+      await manager.query(
+        'UPDATE wallet_ledger SET resulting_balance_minor=$2 WHERE operation_id=$1',
+        [operationId, balance.toString()],
+      );
+      await manager.query(
+        `UPDATE cash_in_operations
+         SET status=$2, provider_payment_id=$3, completed_balance_minor=$4, updated_at=now()
+         WHERE operation_id=$1`,
+        [
+          operationId,
+          OPERATION_STATE.COMPLETED,
+          providerPaymentId,
+          balance.toString(),
+        ],
+      );
+      const completedRows = await manager.query<OperationRow[]>(
+        'SELECT * FROM cash_in_operations WHERE operation_id=$1',
+        [operationId],
+      );
+      return {
+        operation: mapOperation(completedRows[0]!),
+        resultingBalanceMinor: balance,
+      };
+    });
   }
 
   private async findByIdempotencyKey(

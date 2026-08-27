@@ -9,6 +9,7 @@ import {
 } from './ports/cash-in-store.port.js';
 import {
   PAYMENT_PROVIDER,
+  PROVIDER_RESULT,
   type PaymentProviderPort,
 } from './ports/payment-provider.port.js';
 
@@ -28,6 +29,11 @@ export interface CashInResponse {
   error_code?: string;
 }
 
+export interface CashInExecution {
+  httpStatus: number;
+  response: CashInResponse;
+}
+
 @Injectable()
 export class CashInService {
   constructor(
@@ -36,7 +42,7 @@ export class CashInService {
     private readonly correlation: CorrelationContext,
   ) {}
 
-  async execute(command: CashInCommand): Promise<CashInResponse> {
+  async execute(command: CashInCommand): Promise<CashInExecution> {
     const amountMinor = decimalToMinorUnits(command.amount);
     const currency = normalizeCurrency(command.currency);
     const fingerprint = requestFingerprint({
@@ -62,7 +68,7 @@ export class CashInService {
     }
     if (claim.authorized) {
       await this.store.markPaymentRequested(claim.operation.operationId);
-      await this.provider.charge({
+      const result = await this.provider.charge({
         operationId: claim.operation.operationId,
         providerRequestKey: claim.operation.providerRequestKey,
         amountMinor,
@@ -70,14 +76,27 @@ export class CashInService {
         paymentMethod: command.paymentMethod,
         correlationId: this.correlation.getId(),
       });
+      if (result.kind === PROVIDER_RESULT.SUCCESS && result.providerPaymentId) {
+        await this.store.finalizeCompleted(
+          claim.operation.operationId,
+          result.providerPaymentId,
+        );
+      }
     }
     const operation =
       (await this.store.getById(claim.operation.operationId)) ??
       claim.operation;
-    return {
+    const response: CashInResponse = {
       operation_id: operation.operationId,
       status: operation.status.toLowerCase(),
       amount: Number(amountMinor) / 100,
+    };
+    if (operation.completedBalanceMinor !== null) {
+      response.new_balance = Number(operation.completedBalanceMinor) / 100;
+    }
+    return {
+      httpStatus: operation.status === 'COMPLETED' ? 200 : 202,
+      response,
     };
   }
 }

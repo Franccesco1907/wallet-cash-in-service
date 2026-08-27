@@ -20,6 +20,13 @@ export class FakePaymentProvider implements PaymentProviderPort {
 
   async charge(input: ChargeInput): Promise<ChargeResult> {
     FakePaymentProvider.chargeCount += 1;
+    if (input.paymentMethod === 'fake_success') {
+      return {
+        kind: PROVIDER_RESULT.SUCCESS,
+        providerPaymentId: `pay_${input.operationId}`,
+        failureCode: null,
+      };
+    }
     return {
       kind: PROVIDER_RESULT.UNKNOWN,
       providerPaymentId: `pay_${input.operationId}`,
