@@ -11,6 +11,15 @@ This log contains commands and outcomes observed during implementation. Values t
 - Rollback: remove the database/config/test harness and revert dependency/script changes.
 - Commit: pending.
 
+## WU-3: HTTP boundary and multi-pod idempotency arbitration
+
+- RED: `npm run test:e2e -- test/cash-in-idempotency.e2e-spec.ts` -> exit `1`; five independent app instances shared one operation but made `5` provider calls instead of `1`.
+- GREEN: focused e2e -> `2/2` passed after only the PostgreSQL insert winner was allowed to charge.
+- REFACTOR: unit suite, lint, build, and focused rerun -> green; header validation and HTTP mapping remain presentation concerns.
+- Runtime: five Nest application instances shared PostgreSQL and received the same UUID key concurrently.
+- Rollback: remove the Cash-In module, HTTP boundary, ports, adapters, correlation context, and e2e helper while retaining WU-1/WU-2.
+- Commit: pending.
+
 ## WU-2: Domain invariants
 
 - RED: `npm run test:unit -- src/cash-in/domain/operation-state.policy.spec.ts src/cash-in/domain/request-fingerprint.spec.ts` -> exit `1`; terminal transition, invalid-money, and canonical fingerprint expectations failed (`5` failed, `5` passed).
