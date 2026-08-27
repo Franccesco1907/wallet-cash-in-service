@@ -3,10 +3,5 @@ import tsconfigPaths from 'vite-tsconfig-paths';
 
 export default defineConfig({
   plugins: [tsconfigPaths()],
-  test: {
-    globals: true,
-    root: './',
-    include: ['test/**/*.e2e-spec.ts'],
-    testTimeout: 15000,
-  },
+  test: { globals: true, root: './', include: ['src/**/*.spec.ts'] },
 });
