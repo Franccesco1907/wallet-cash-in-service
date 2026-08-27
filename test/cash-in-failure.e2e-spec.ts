@@ -24,7 +24,7 @@ describe('cash-in terminal failures', () => {
     const key = randomUUID();
     const body = {
       user_id: 'usr_failed',
-      amount: 20,
+      amount: '20.00',
       currency: 'PEN',
       payment_method: 'fake_decline',
     };
@@ -57,7 +57,7 @@ describe('cash-in terminal failures', () => {
     const key = randomUUID();
     const base = {
       user_id: 'usr_conflict',
-      amount: 10,
+      amount: '10.00',
       currency: 'PEN',
       payment_method: 'fake_success',
     };
@@ -68,7 +68,7 @@ describe('cash-in terminal failures', () => {
     const conflict = await request(app.getHttpServer())
       .post('/cash-in')
       .set('Idempotency-Key', key)
-      .send({ ...base, amount: 11 });
+      .send({ ...base, amount: '11.00' });
     await app.close();
     expect(conflict.status).toBe(409);
     expect(FakePaymentProvider.calls()).toBe(1);

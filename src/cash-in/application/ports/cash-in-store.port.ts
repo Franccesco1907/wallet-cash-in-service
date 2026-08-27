@@ -25,13 +25,15 @@ export interface OperationClaim {
 
 export interface CompletionResult {
   operation: CashInOperation;
-  resultingBalanceMinor: bigint;
+  applied: boolean;
+  resultingBalanceMinor: bigint | null;
 }
 
 export const PROVIDER_EVENT_DECISION = {
   PROCESS: 'PROCESS',
   DUPLICATE: 'DUPLICATE',
   OLD: 'OLD',
+  MISMATCH: 'MISMATCH',
 } as const;
 
 export type ProviderEventDecision =
@@ -43,11 +45,12 @@ export interface ProviderEventInput {
   eventType: string;
   sequence: bigint;
   payloadHash: string;
+  providerPaymentId: string;
 }
 
 export interface CashInStorePort {
   createOrGet(input: CreateOperationInput): Promise<OperationClaim>;
-  markPaymentRequested(operationId: string): Promise<void>;
+  markPaymentRequested(operationId: string): Promise<boolean>;
   getById(operationId: string): Promise<CashInOperation | null>;
   finalizeCompleted(
     operationId: string,

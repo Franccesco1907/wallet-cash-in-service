@@ -22,7 +22,7 @@ Observed commands and outcomes from implementation. Sensitive values are omitted
 
 ## WU-3: HTTP and multi-pod arbitration
 
-- RED: focused idempotency e2e -> exit `1`; five independent app instances shared one operation but made `5` provider calls.
+- RED: focused idempotency e2e -> exit `1`; five same-process application instances shared one operation but made `5` provider calls.
 - GREEN: same command -> `2/2` passed after only the PostgreSQL insert winner could charge.
 - REFACTOR: unit, lint, build, focused rerun -> green.
 - Runtime: five Nest instances shared PostgreSQL and one UUID key concurrently.
@@ -82,3 +82,12 @@ Observed commands and outcomes from implementation. Sensitive values are omitted
 - E2E: `5` files, `7` tests passed.
 - Coverage: statements `100%`, branches `88.88%`, functions `100%`, lines `100%` for the unit-test scope.
 - Formatting, lint, build, and `git diff --check`: passed.
+
+## Independent-review correction
+
+- RED unit: focused configuration/money command -> `2` failures; production silently accepted known defaults and `9007199254740993` minor units formatted as `.92` instead of `.93`.
+- RED integration: focused wallet command -> `1` failure; a late success rewrote `FAILED` to `COMPLETED` and credited the ledger.
+- RED e2e: focused timeout/webhook command -> `4` failures; thrown timeout returned `500`, uncertain retry stayed `202`, failure webhook returned `400`, and changed duplicate identity returned `202`.
+- GREEN: focused unit `11/11`, integration `3/3`, and corrected timeout/webhook/success e2e `9/9` passed.
+- REFACTOR: formatter/check, lint, build, unit `13/13`, integration `4/4`, e2e `14/14`, coverage, production audit, and diff check passed.
+- Runtime: real PostgreSQL proved terminal-state protection, exact `BIGINT` balances, migration identity column, restart recovery, status reconciliation, failure webhook, and immutable duplicate rejection. The `40P01` case remains explicitly a retry-policy simulation, not evidence of a real deadlock.

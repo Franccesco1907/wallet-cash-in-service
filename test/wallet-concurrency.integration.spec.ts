@@ -63,4 +63,35 @@ describe('wallet balance concurrency', () => {
     expect(result).toBe('completed');
     expect(attempts).toBe(2);
   });
+
+  it('does not credit or rewrite a confirmed rejection after late success', async () => {
+    await AppDataSource.query(
+      'TRUNCATE provider_events, wallet_ledger, wallets, cash_in_operations CASCADE',
+    );
+    const store = new PostgresCashInStore(AppDataSource);
+    const operationId = randomUUID();
+    await store.createOrGet({
+      operationId,
+      idempotencyKey: randomUUID(),
+      requestFingerprint: 'f'.repeat(64),
+      providerRequestKey: randomUUID(),
+      userId: 'usr_rejected',
+      amountMinor: 5000n,
+      currency: 'PEN',
+      paymentMethod: 'fake_decline',
+    });
+    await store.markPaymentRequested(operationId);
+    await store.markFailed(operationId, 'PAYMENT_DECLINED');
+
+    await store.finalizeCompleted(operationId, 'late_success');
+
+    const operation = await store.getById(operationId);
+    const ledger = await AppDataSource.query<Array<{ count: string }>>(
+      'SELECT count(*)::text AS count FROM wallet_ledger WHERE operation_id=$1',
+      [operationId],
+    );
+    expect(operation?.status).toBe('FAILED');
+    expect(operation?.failureCode).toBe('PAYMENT_DECLINED');
+    expect(ledger[0]?.count).toBe('0');
+  });
 });

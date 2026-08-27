@@ -32,13 +32,14 @@ export class PaymentWebhookController {
     if (!rawBody || !signature || !this.signatures.verify(rawBody, signature)) {
       throw new UnauthorizedException('Invalid webhook signature');
     }
-    await this.service.handleSuccessfulWebhook({
+    await this.service.handlePaymentWebhook({
       eventId: body.event_id,
       operationId: body.operation_id,
       eventType: body.type,
       sequence: BigInt(body.sequence),
       providerPaymentId: body.provider_payment_id,
       payloadHash: createHash('sha256').update(rawBody).digest('hex'),
+      failureCode: body.failure_code ?? null,
     });
     return { accepted: true };
   }

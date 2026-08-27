@@ -49,7 +49,7 @@ describe('POST /webhooks/payment', () => {
       .set('Idempotency-Key', randomUUID())
       .send({
         user_id: 'usr_webhook',
-        amount: 30,
+        amount: '30.00',
         currency: 'PEN',
         payment_method: 'fake_delayed',
       })
@@ -105,5 +105,81 @@ describe('POST /webhooks/payment', () => {
     expect(events.rowCount).toBe(2);
     expect(ledger.rowCount).toBe(1);
     expect(wallet.rows[0]?.balance_minor).toBe('3000');
+  });
+
+  it('moves an uncertain operation to failed on confirmed failure webhook', async () => {
+    const app = await createTestApp();
+    const key = randomUUID();
+    const cashIn = await request(app.getHttpServer())
+      .post('/cash-in')
+      .set('Idempotency-Key', key)
+      .send({
+        user_id: 'usr_webhook_failure',
+        amount: '12.00',
+        currency: 'PEN',
+        payment_method: 'fake_timeout',
+      });
+    const payload = {
+      event_id: 'evt_failure',
+      operation_id: cashIn.body.operation_id,
+      type: 'payment.failed',
+      sequence: 1,
+      provider_payment_id: 'pay_failed',
+      failure_code: 'PAYMENT_DECLINED',
+    };
+    const raw = JSON.stringify(payload);
+    const webhook = await request(app.getHttpServer())
+      .post('/webhooks/payment')
+      .set('Content-Type', 'application/json')
+      .set('X-Webhook-Signature', signature(raw))
+      .send(raw);
+    const replay = await request(app.getHttpServer())
+      .post('/cash-in')
+      .set('Idempotency-Key', key)
+      .send({
+        user_id: 'usr_webhook_failure',
+        amount: '12.00',
+        currency: 'PEN',
+        payment_method: 'fake_timeout',
+      });
+    await app.close();
+    expect(webhook.status).toBe(202);
+    expect(replay.status).toBe(422);
+    expect(replay.body.error_code).toBe('PAYMENT_DECLINED');
+  });
+
+  it('rejects a duplicate event id with changed immutable identity', async () => {
+    const app = await createTestApp();
+    const cashIn = await request(app.getHttpServer())
+      .post('/cash-in')
+      .set('Idempotency-Key', randomUUID())
+      .send({
+        user_id: 'usr_mismatch',
+        amount: '9.00',
+        currency: 'PEN',
+        payment_method: 'fake_timeout',
+      });
+    const original = {
+      event_id: 'evt_immutable',
+      operation_id: cashIn.body.operation_id,
+      type: 'payment.succeeded',
+      sequence: 1,
+      provider_payment_id: 'pay_original',
+    };
+    const originalRaw = JSON.stringify(original);
+    await request(app.getHttpServer())
+      .post('/webhooks/payment')
+      .set('Content-Type', 'application/json')
+      .set('X-Webhook-Signature', signature(originalRaw))
+      .send(originalRaw);
+    const changed = { ...original, provider_payment_id: 'pay_changed' };
+    const changedRaw = JSON.stringify(changed);
+    const mismatch = await request(app.getHttpServer())
+      .post('/webhooks/payment')
+      .set('Content-Type', 'application/json')
+      .set('X-Webhook-Signature', signature(changedRaw))
+      .send(changedRaw);
+    await app.close();
+    expect(mismatch.status).toBe(409);
   });
 });

@@ -31,7 +31,7 @@ describe('POST /cash-in idempotency', () => {
           .set('Idempotency-Key', key)
           .send({
             user_id: 'usr_abc123',
-            amount: 100,
+            amount: '100.00',
             currency: 'pen',
             payment_method: 'fake_pending',
           }),
@@ -53,7 +53,7 @@ describe('POST /cash-in idempotency', () => {
       .set('Idempotency-Key', 'invalid')
       .send({
         user_id: 'usr',
-        amount: 1,
+        amount: '1.00',
         currency: 'PEN',
         payment_method: 'fake_pending',
         extra: true,

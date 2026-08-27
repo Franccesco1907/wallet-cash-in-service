@@ -33,6 +33,15 @@ interface OperationRow {
   completed_balance_minor: string | null;
 }
 
+interface ProviderEventRow {
+  operation_id: string;
+  provider_payment_id: string;
+  event_type: string;
+  event_sequence: string;
+  payload_hash: string;
+  processing_status: string;
+}
+
 function mapOperation(row: OperationRow): CashInOperation {
   return {
     operationId: row.operation_id,
@@ -84,12 +93,20 @@ export class PostgresCashInStore implements CashInStorePort {
     return { operation: existing, authorized: false };
   }
 
-  async markPaymentRequested(operationId: string): Promise<void> {
-    await this.dataSource.query(
-      `UPDATE cash_in_operations SET status=$2, updated_at=now()
-       WHERE operation_id=$1 AND status=$3`,
-      [operationId, OPERATION_STATE.PAYMENT_REQUESTED, OPERATION_STATE.CREATED],
-    );
+  async markPaymentRequested(operationId: string): Promise<boolean> {
+    return this.dataSource.transaction(async (manager) => {
+      const rows = await manager.query<Array<{ status: string }>>(
+        'SELECT status FROM cash_in_operations WHERE operation_id=$1 FOR UPDATE',
+        [operationId],
+      );
+      if (rows[0]?.status !== OPERATION_STATE.CREATED) return false;
+      await manager.query(
+        `UPDATE cash_in_operations SET status=$2, updated_at=now()
+         WHERE operation_id=$1`,
+        [operationId, OPERATION_STATE.PAYMENT_REQUESTED],
+      );
+      return true;
+    });
   }
 
   async getById(operationId: string): Promise<CashInOperation | null> {
@@ -115,7 +132,18 @@ export class PostgresCashInStore implements CashInStorePort {
         if (row.status === OPERATION_STATE.COMPLETED) {
           return {
             operation: mapOperation(row),
+            applied: false,
             resultingBalanceMinor: BigInt(row.completed_balance_minor ?? '0'),
+          };
+        }
+        if (
+          row.status !== OPERATION_STATE.PAYMENT_REQUESTED &&
+          row.status !== OPERATION_STATE.AWAITING_CONFIRMATION
+        ) {
+          return {
+            operation: mapOperation(row),
+            applied: false,
+            resultingBalanceMinor: null,
           };
         }
         await manager.query(
@@ -168,6 +196,7 @@ export class PostgresCashInStore implements CashInStorePort {
         );
         return {
           operation: mapOperation(completedRows[0]!),
+          applied: true,
           resultingBalanceMinor: balance,
         };
       }),
@@ -178,12 +207,13 @@ export class PostgresCashInStore implements CashInStorePort {
     await this.dataSource.query(
       `UPDATE cash_in_operations
        SET status=$2, failure_code=$3, updated_at=now()
-       WHERE operation_id=$1 AND status=$4`,
+       WHERE operation_id=$1 AND status IN ($4,$5)`,
       [
         operationId,
         OPERATION_STATE.FAILED,
         failureCode,
         OPERATION_STATE.PAYMENT_REQUESTED,
+        OPERATION_STATE.AWAITING_CONFIRMATION,
       ],
     );
   }
@@ -207,13 +237,21 @@ export class PostgresCashInStore implements CashInStorePort {
       await manager.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
         input.eventId,
       ]);
-      const duplicates = await manager.query<
-        Array<{ processing_status: string }>
-      >(
-        'SELECT processing_status FROM provider_events WHERE provider_event_id=$1',
+      const duplicates = await manager.query<ProviderEventRow[]>(
+        `SELECT operation_id, provider_payment_id, event_type,
+                event_sequence, payload_hash, processing_status
+         FROM provider_events WHERE provider_event_id=$1`,
         [input.eventId],
       );
       if (duplicates[0]) {
+        const existing = duplicates[0];
+        const identityMatches =
+          existing.operation_id === input.operationId &&
+          existing.provider_payment_id === input.providerPaymentId &&
+          existing.event_type === input.eventType &&
+          existing.event_sequence === input.sequence.toString() &&
+          existing.payload_hash === input.payloadHash;
+        if (!identityMatches) return PROVIDER_EVENT_DECISION.MISMATCH;
         return duplicates[0].processing_status === 'RECEIVED'
           ? PROVIDER_EVENT_DECISION.PROCESS
           : PROVIDER_EVENT_DECISION.DUPLICATE;
@@ -233,8 +271,8 @@ export class PostgresCashInStore implements CashInStorePort {
       await manager.query(
         `INSERT INTO provider_events
          (provider_event_id, operation_id, event_type, event_sequence, payload_hash,
-          processing_status)
-         VALUES ($1,$2,$3,$4,$5,$6)`,
+          processing_status, provider_payment_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
         [
           input.eventId,
           input.operationId,
@@ -244,6 +282,7 @@ export class PostgresCashInStore implements CashInStorePort {
           decision === PROVIDER_EVENT_DECISION.PROCESS
             ? 'RECEIVED'
             : 'IGNORED_OLD',
+          input.providerPaymentId,
         ],
       );
       if (decision === PROVIDER_EVENT_DECISION.PROCESS) {

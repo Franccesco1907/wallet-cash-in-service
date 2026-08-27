@@ -1,4 +1,8 @@
-import { decimalToMinorUnits, normalizeCurrency } from './money.js';
+import {
+  decimalToMinorUnits,
+  minorUnitsToDecimal,
+  normalizeCurrency,
+} from './money.js';
 import { requestFingerprint } from './request-fingerprint.js';
 
 describe('cash-in request normalization', () => {
@@ -33,5 +37,9 @@ describe('cash-in request normalization', () => {
 
     expect(first).toBe(second);
     expect(first).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it('formats balances beyond Number safe range without precision loss', () => {
+    expect(minorUnitsToDecimal(9007199254740993n)).toBe('90071992547409.93');
   });
 });

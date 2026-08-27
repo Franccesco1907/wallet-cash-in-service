@@ -1,18 +1,33 @@
 import { ConflictException, Inject, Injectable, Logger } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
-import { decimalToMinorUnits, normalizeCurrency } from '../domain/money.js';
+import {
+  decimalToMinorUnits,
+  minorUnitsToDecimal,
+  normalizeCurrency,
+} from '../domain/money.js';
+import { OPERATION_STATE } from '../domain/operation-state.js';
 import { requestFingerprint } from '../domain/request-fingerprint.js';
 import { CorrelationContext } from '../../shared/observability/correlation-context.js';
 import {
   CASH_IN_STORE,
   PROVIDER_EVENT_DECISION,
+  type CashInOperation,
   type CashInStorePort,
 } from './ports/cash-in-store.port.js';
 import {
   PAYMENT_PROVIDER,
   PROVIDER_RESULT,
+  type ChargeResult,
   type PaymentProviderPort,
 } from './ports/payment-provider.port.js';
+
+export const PAYMENT_EVENT_TYPE = {
+  SUCCEEDED: 'payment.succeeded',
+  FAILED: 'payment.failed',
+} as const;
+
+export type PaymentEventType =
+  (typeof PAYMENT_EVENT_TYPE)[keyof typeof PAYMENT_EVENT_TYPE];
 
 export interface CashInCommand {
   idempotencyKey: string;
@@ -25,8 +40,8 @@ export interface CashInCommand {
 export interface CashInResponse {
   operation_id: string;
   status: string;
-  amount: number;
-  new_balance?: number;
+  amount: string;
+  new_balance?: string;
   error_code?: string;
 }
 
@@ -38,10 +53,11 @@ export interface CashInExecution {
 export interface PaymentWebhookCommand {
   eventId: string;
   operationId: string;
-  eventType: string;
+  eventType: PaymentEventType;
   sequence: bigint;
   providerPaymentId: string;
   payloadHash: string;
+  failureCode: string | null;
 }
 
 @Injectable()
@@ -87,29 +103,25 @@ export class CashInService {
         .digest('hex')
         .slice(0, 16),
     });
-    if (claim.authorized) {
-      await this.store.markPaymentRequested(claim.operation.operationId);
-      const result = await this.provider.charge({
-        operationId: claim.operation.operationId,
-        providerRequestKey: claim.operation.providerRequestKey,
+    const claimedForCharge =
+      (claim.authorized ||
+        claim.operation.status === OPERATION_STATE.CREATED) &&
+      (await this.store.markPaymentRequested(claim.operation.operationId));
+    if (claimedForCharge) {
+      const result = await this.safeCharge(
+        claim.operation,
         amountMinor,
         currency,
-        paymentMethod: command.paymentMethod,
-        correlationId: this.correlation.getId(),
-      });
-      if (result.kind === PROVIDER_RESULT.SUCCESS && result.providerPaymentId) {
-        await this.store.finalizeCompleted(
-          claim.operation.operationId,
-          result.providerPaymentId,
-        );
-      } else if (result.kind === PROVIDER_RESULT.REJECTED) {
-        await this.store.markFailed(
-          claim.operation.operationId,
-          result.failureCode ?? 'PAYMENT_DECLINED',
-        );
-      } else {
-        await this.store.markAwaitingConfirmation(claim.operation.operationId);
-      }
+      );
+      await this.applyProviderResult(claim.operation.operationId, result);
+    } else if (
+      claim.operation.status === OPERATION_STATE.PAYMENT_REQUESTED ||
+      claim.operation.status === OPERATION_STATE.AWAITING_CONFIRMATION
+    ) {
+      const result = await this.safeGetStatus(
+        claim.operation.providerRequestKey,
+      );
+      await this.applyProviderResult(claim.operation.operationId, result);
     }
     const operation =
       (await this.store.getById(claim.operation.operationId)) ??
@@ -117,10 +129,12 @@ export class CashInService {
     const response: CashInResponse = {
       operation_id: operation.operationId,
       status: operation.status.toLowerCase(),
-      amount: Number(amountMinor) / 100,
+      amount: minorUnitsToDecimal(amountMinor),
     };
     if (operation.completedBalanceMinor !== null) {
-      response.new_balance = Number(operation.completedBalanceMinor) / 100;
+      response.new_balance = minorUnitsToDecimal(
+        operation.completedBalanceMinor,
+      );
     }
     if (operation.failureCode !== null)
       response.error_code = operation.failureCode;
@@ -135,20 +149,90 @@ export class CashInService {
     };
   }
 
-  async handleSuccessfulWebhook(command: PaymentWebhookCommand): Promise<void> {
+  async handlePaymentWebhook(command: PaymentWebhookCommand): Promise<void> {
     const decision = await this.store.recordProviderEvent({
       eventId: command.eventId,
       operationId: command.operationId,
       eventType: command.eventType,
       sequence: command.sequence,
       payloadHash: command.payloadHash,
+      providerPaymentId: command.providerPaymentId,
     });
+    if (decision === PROVIDER_EVENT_DECISION.MISMATCH) {
+      throw new ConflictException('Webhook event identity mismatch');
+    }
     if (decision === PROVIDER_EVENT_DECISION.PROCESS) {
-      await this.store.finalizeCompleted(
-        command.operationId,
-        command.providerPaymentId,
-      );
+      if (command.eventType === PAYMENT_EVENT_TYPE.SUCCEEDED) {
+        await this.store.finalizeCompleted(
+          command.operationId,
+          command.providerPaymentId,
+        );
+      } else {
+        await this.store.markFailed(
+          command.operationId,
+          command.failureCode ?? 'PAYMENT_DECLINED',
+        );
+      }
       await this.store.markProviderEventProcessed(command.eventId);
+    }
+  }
+
+  private async safeCharge(
+    operation: CashInOperation,
+    amountMinor: bigint,
+    currency: string,
+  ): Promise<ChargeResult> {
+    try {
+      return await this.provider.charge({
+        operationId: operation.operationId,
+        providerRequestKey: operation.providerRequestKey,
+        amountMinor,
+        currency,
+        paymentMethod: operation.paymentMethod,
+        correlationId: this.correlation.getId(),
+      });
+    } catch (error: unknown) {
+      this.logger.warn({
+        event: 'provider_charge_outcome_unknown',
+        operation_id: operation.operationId,
+        correlation_id: this.correlation.getId(),
+        error_type: error instanceof Error ? error.name : 'UnknownError',
+      });
+      return {
+        kind: PROVIDER_RESULT.UNKNOWN,
+        providerPaymentId: null,
+        failureCode: null,
+      };
+    }
+  }
+
+  private async safeGetStatus(
+    providerRequestKey: string,
+  ): Promise<ChargeResult> {
+    try {
+      return await this.provider.getStatus(providerRequestKey);
+    } catch {
+      return {
+        kind: PROVIDER_RESULT.UNKNOWN,
+        providerPaymentId: null,
+        failureCode: null,
+      };
+    }
+  }
+
+  private async applyProviderResult(
+    operationId: string,
+    result: ChargeResult,
+  ): Promise<void> {
+    if (result.kind === PROVIDER_RESULT.SUCCESS && result.providerPaymentId) {
+      await this.store.finalizeCompleted(operationId, result.providerPaymentId);
+    } else if (result.kind === PROVIDER_RESULT.REJECTED) {
+      await this.store.markFailed(
+        operationId,
+        result.failureCode ?? 'PAYMENT_DECLINED',
+      );
+    } else {
+      await this.store.markAwaitingConfirmation(operationId);
     }
   }
 }

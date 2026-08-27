@@ -1,4 +1,15 @@
-import { IsIn, IsInt, IsString, IsUUID, Min } from 'class-validator';
+import {
+  IsIn,
+  IsInt,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Min,
+} from 'class-validator';
+import {
+  PAYMENT_EVENT_TYPE,
+  type PaymentEventType,
+} from '../../application/cash-in.service.js';
 
 export class PaymentWebhookDto {
   @IsString()
@@ -7,8 +18,8 @@ export class PaymentWebhookDto {
   @IsUUID()
   operation_id!: string;
 
-  @IsIn(['payment.succeeded'])
-  type!: string;
+  @IsIn(Object.values(PAYMENT_EVENT_TYPE))
+  type!: PaymentEventType;
 
   @IsInt()
   @Min(1)
@@ -16,4 +27,8 @@ export class PaymentWebhookDto {
 
   @IsString()
   provider_payment_id!: string;
+
+  @IsOptional()
+  @IsString()
+  failure_code?: string;
 }

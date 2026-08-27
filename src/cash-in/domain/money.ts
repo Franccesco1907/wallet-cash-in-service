@@ -14,3 +14,11 @@ export function decimalToMinorUnits(amount: string): bigint {
 export function normalizeCurrency(currency: string): string {
   return currency.trim().toUpperCase();
 }
+
+export function minorUnitsToDecimal(amountMinor: bigint): string {
+  const negative = amountMinor < 0n;
+  const absolute = negative ? -amountMinor : amountMinor;
+  const whole = absolute / 100n;
+  const fractional = (absolute % 100n).toString().padStart(2, '0');
+  return `${negative ? '-' : ''}${whole.toString()}.${fractional}`;
+}

@@ -14,9 +14,12 @@ describe('database schema', () => {
       WHERE table_schema = 'public'
         AND constraint_type IN ('PRIMARY KEY', 'UNIQUE')
     `);
-    await client.end();
-
     const constraints = result.rows.map((row) => row.constraint_name);
+    const columns = await client.query<{ column_name: string }>(`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_schema='public' AND table_name='provider_events'
+    `);
+    await client.end();
     expect(constraints).toEqual(
       expect.arrayContaining([
         'UQ_cash_in_operations_idempotency_key',
@@ -24,6 +27,9 @@ describe('database schema', () => {
         'UQ_wallet_ledger_operation_id',
         'UQ_provider_events_provider_event_id',
       ]),
+    );
+    expect(columns.rows.map((row) => row.column_name)).toContain(
+      'provider_payment_id',
     );
   });
 });

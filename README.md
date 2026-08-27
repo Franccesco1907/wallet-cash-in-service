@@ -24,7 +24,7 @@ Requires `Idempotency-Key: <UUID>`.
 ```json
 {
   "user_id": "usr_abc123",
-  "amount": 100.00,
+  "amount": "100.00",
   "currency": "PEN",
   "payment_method": "fake_success"
 }
@@ -37,7 +37,7 @@ Requires `Idempotency-Key: <UUID>`.
 | `failed` | 422 | Confirmed rejection; stable error is replayed |
 | key conflict | 409 | UUID belongs to another normalized request |
 
-The deterministic fake accepts `fake_success`, `fake_decline`, `fake_timeout`, and test-controlled `fake_delayed`. These are test scenarios, not a production provider contract.
+Money is accepted and returned as exact decimal text. JSON numbers are rejected because parsing a large numeric literal can lose precision before validation. The deterministic fake accepts `fake_success`, `fake_decline`, `fake_timeout`, and test-controlled `fake_delayed`. These are test scenarios, not a production provider contract.
 
 ### `POST /webhooks/payment`
 
@@ -53,7 +53,7 @@ Requires `X-Webhook-Signature`, a hexadecimal HMAC-SHA256 of the exact raw body 
 }
 ```
 
-Valid duplicates and old events receive `202`; invalid signatures receive `401` before business processing.
+The supported event types are `payment.succeeded` and `payment.failed`; failure events may include `failure_code`. Valid identical duplicates and old events receive `202`. Reusing an event ID with changed immutable identity returns `409`. Invalid signatures receive `401` before business processing.
 
 ## Architecture
 
@@ -80,11 +80,11 @@ Persisted money uses `BIGINT`. Successful finalization locks the operation, inse
 
 ### Unknown outcomes
 
-A timeout is `AWAITING_CONFIRMATION`, not failure. Retries receive the same operation and do not create a new provider request. If a provider offers neither idempotent requests nor canonical lookup, no service can guarantee both availability and no duplicate external charge; this service chooses safety and waits for reconciliation.
+A timeout or thrown transport error is `AWAITING_CONFIRMATION`, not failure. Retries receive the same operation, perform one bounded idempotent status lookup, and do not create a new provider request. A `CREATED` operation left by a restart can be claimed atomically; a `PAYMENT_REQUESTED` operation is reconciled rather than blindly charged. If a provider offers neither idempotent requests nor canonical lookup, no service can guarantee both availability and no duplicate external charge; this service chooses safety and waits for reconciliation.
 
 ### Webhooks
 
-HMAC verification uses the raw body. Events are serialized, persisted once, and compared with the latest operation sequence. Duplicate IDs are acknowledged, older sequences are retained as ignored, and success shares the synchronous transactional finalizer. A late response after an early webhook is therefore a no-op.
+HMAC verification uses the raw body. Events are serialized, persisted once, and compared with the latest operation sequence and immutable identity fields. Duplicate IDs are acknowledged only when operation, provider payment, type, sequence, and payload hash match. Older sequences are retained as ignored. Success shares the synchronous transactional finalizer; confirmed failure moves `PAYMENT_REQUESTED` or `AWAITING_CONFIRMATION` to `FAILED`. Terminal states cannot be rewritten by contradictory late events.
 
 ## Database and configuration
 
@@ -92,7 +92,7 @@ HMAC verification uses the raw body. Events are serialized, persisted once, and 
 - `synchronize: false` is mandatory.
 - Zod 4 validates configuration at bootstrap.
 - The explicit migration is tested up/down/up.
-- `.env.example` contains placeholders only.
+- `.env.example` contains placeholders only. Production requires explicit `DATABASE_URL` and `WEBHOOK_SECRET`; defaults exist only for development/test.
 
 ## Verification
 
@@ -116,7 +116,7 @@ Redis may later be a cache/duplicate shield, never the financial authority. Saga
 
 ## Defense notes
 
-- Five pods are arbitrated by PostgreSQL, not memory.
+- Multi-pod ownership is arbitrated by PostgreSQL, not memory. The e2e harness uses five same-process Nest application instances to approximate independent pods; the database constraint and transactional claim are the actual cross-process invariant.
 - Timeout preserves uncertainty because a new provider key could charge twice.
 - Ledger uniqueness protects credit regardless of webhook delivery count.
 - At one million operations/day, evaluate partitioning/retention, pool budgets, async reconciliation, outbox, rate limits, and measured cache pressure.
