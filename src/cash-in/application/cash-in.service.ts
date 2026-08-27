@@ -5,6 +5,7 @@ import { requestFingerprint } from '../domain/request-fingerprint.js';
 import { CorrelationContext } from '../../shared/observability/correlation-context.js';
 import {
   CASH_IN_STORE,
+  PROVIDER_EVENT_DECISION,
   type CashInStorePort,
 } from './ports/cash-in-store.port.js';
 import {
@@ -32,6 +33,15 @@ export interface CashInResponse {
 export interface CashInExecution {
   httpStatus: number;
   response: CashInResponse;
+}
+
+export interface PaymentWebhookCommand {
+  eventId: string;
+  operationId: string;
+  eventType: string;
+  sequence: bigint;
+  providerPaymentId: string;
+  payloadHash: string;
 }
 
 @Injectable()
@@ -112,5 +122,21 @@ export class CashInService {
             : 202,
       response,
     };
+  }
+
+  async handleSuccessfulWebhook(command: PaymentWebhookCommand): Promise<void> {
+    const decision = await this.store.recordProviderEvent({
+      eventId: command.eventId,
+      operationId: command.operationId,
+      eventType: command.eventType,
+      sequence: command.sequence,
+      payloadHash: command.payloadHash,
+    });
+    if (decision === PROVIDER_EVENT_DECISION.PROCESS) {
+      await this.store.finalizeCompleted(
+        command.operationId,
+        command.providerPaymentId,
+      );
+    }
   }
 }

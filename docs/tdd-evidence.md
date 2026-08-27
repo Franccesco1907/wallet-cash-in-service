@@ -11,6 +11,15 @@ This log contains commands and outcomes observed during implementation. Values t
 - Rollback: remove the database/config/test harness and revert dependency/script changes.
 - Commit: pending.
 
+## WU-7: Authenticated, durable, duplicate-safe webhooks
+
+- RED: `npm run test:e2e -- test/payment-webhook.e2e-spec.ts` -> exit `1`; controllable delayed-provider and webhook behavior did not exist.
+- GREEN: focused e2e -> `1/1` passed; duplicate delivery produced one event row for that ID, old event was retained as ignored, and wallet credit occurred once.
+- REFACTOR: integration suite, lint, build, and focused rerun -> green; HMAC verification remains provider-specific and both confirmation paths share `finalizeCompleted`.
+- Runtime: signed success was delivered twice before delayed provider response, followed by an old event and invalid signature.
+- Rollback: remove webhook DTO/controller/verifier/inbox handling and delayed fake behavior; synchronous flow remains.
+- Commit: pending.
+
 ## WU-6: Unknown provider outcome and safe retry
 
 - RED: `npm run test:e2e -- test/cash-in-timeout.e2e-spec.ts` -> exit `1`; timeout remained `payment_requested` instead of `awaiting_confirmation`.

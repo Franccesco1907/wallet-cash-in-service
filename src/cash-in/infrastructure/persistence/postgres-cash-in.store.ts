@@ -6,12 +6,15 @@ import {
   OPERATION_STATE,
   type OperationState,
 } from '../../domain/operation-state.js';
-import type {
-  CashInOperation,
-  CashInStorePort,
-  CompletionResult,
-  CreateOperationInput,
-  OperationClaim,
+import {
+  PROVIDER_EVENT_DECISION,
+  type CashInOperation,
+  type CashInStorePort,
+  type CompletionResult,
+  type CreateOperationInput,
+  type OperationClaim,
+  type ProviderEventDecision,
+  type ProviderEventInput,
 } from '../../application/ports/cash-in-store.port.js';
 
 interface OperationRow {
@@ -190,6 +193,56 @@ export class PostgresCashInStore implements CashInStorePort {
         OPERATION_STATE.PAYMENT_REQUESTED,
       ],
     );
+  }
+
+  async recordProviderEvent(
+    input: ProviderEventInput,
+  ): Promise<ProviderEventDecision> {
+    return this.dataSource.transaction(async (manager) => {
+      await manager.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
+        input.eventId,
+      ]);
+      const duplicates = await manager.query<Array<{ exists: boolean }>>(
+        'SELECT EXISTS(SELECT 1 FROM provider_events WHERE provider_event_id=$1) AS exists',
+        [input.eventId],
+      );
+      if (duplicates[0]?.exists) return PROVIDER_EVENT_DECISION.DUPLICATE;
+
+      const operations = await manager.query<
+        Array<{ provider_event_sequence: string }>
+      >(
+        'SELECT provider_event_sequence FROM cash_in_operations WHERE operation_id=$1 FOR UPDATE',
+        [input.operationId],
+      );
+      if (!operations[0]) throw new Error('Webhook operation not found');
+      const decision =
+        input.sequence <= BigInt(operations[0].provider_event_sequence)
+          ? PROVIDER_EVENT_DECISION.OLD
+          : PROVIDER_EVENT_DECISION.PROCESS;
+      await manager.query(
+        `INSERT INTO provider_events
+         (provider_event_id, operation_id, event_type, event_sequence, payload_hash,
+          processing_status, processed_at)
+         VALUES ($1,$2,$3,$4,$5,$6,now())`,
+        [
+          input.eventId,
+          input.operationId,
+          input.eventType,
+          input.sequence.toString(),
+          input.payloadHash,
+          decision === PROVIDER_EVENT_DECISION.PROCESS
+            ? 'PROCESSED'
+            : 'IGNORED_OLD',
+        ],
+      );
+      if (decision === PROVIDER_EVENT_DECISION.PROCESS) {
+        await manager.query(
+          'UPDATE cash_in_operations SET provider_event_sequence=$2 WHERE operation_id=$1',
+          [input.operationId, input.sequence.toString()],
+        );
+      }
+      return decision;
+    });
   }
 
   private async findByIdempotencyKey(

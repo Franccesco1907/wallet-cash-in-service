@@ -28,6 +28,23 @@ export interface CompletionResult {
   resultingBalanceMinor: bigint;
 }
 
+export const PROVIDER_EVENT_DECISION = {
+  PROCESS: 'PROCESS',
+  DUPLICATE: 'DUPLICATE',
+  OLD: 'OLD',
+} as const;
+
+export type ProviderEventDecision =
+  (typeof PROVIDER_EVENT_DECISION)[keyof typeof PROVIDER_EVENT_DECISION];
+
+export interface ProviderEventInput {
+  eventId: string;
+  operationId: string;
+  eventType: string;
+  sequence: bigint;
+  payloadHash: string;
+}
+
 export interface CashInStorePort {
   createOrGet(input: CreateOperationInput): Promise<OperationClaim>;
   markPaymentRequested(operationId: string): Promise<void>;
@@ -38,6 +55,9 @@ export interface CashInStorePort {
   ): Promise<CompletionResult>;
   markFailed(operationId: string, failureCode: string): Promise<void>;
   markAwaitingConfirmation(operationId: string): Promise<void>;
+  recordProviderEvent(
+    input: ProviderEventInput,
+  ): Promise<ProviderEventDecision>;
 }
 
 export const CASH_IN_STORE = Symbol('CASH_IN_STORE');

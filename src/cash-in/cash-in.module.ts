@@ -6,12 +6,15 @@ import { PostgresCashInStore } from './infrastructure/persistence/postgres-cash-
 import { FakePaymentProvider } from './infrastructure/payment/fake-payment-provider.adapter.js';
 import { CashInController } from './presentation/cash-in.controller.js';
 import { CorrelationContext } from '../shared/observability/correlation-context.js';
+import { PaymentWebhookController } from './presentation/payment-webhook.controller.js';
+import { WebhookSignatureVerifier } from './infrastructure/payment/webhook-signature-verifier.js';
 
 @Module({
-  controllers: [CashInController],
+  controllers: [CashInController, PaymentWebhookController],
   providers: [
     CashInService,
     CorrelationContext,
+    WebhookSignatureVerifier,
     { provide: CASH_IN_STORE, useClass: PostgresCashInStore },
     { provide: PAYMENT_PROVIDER, useClass: FakePaymentProvider },
   ],
