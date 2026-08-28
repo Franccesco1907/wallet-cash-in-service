@@ -24,7 +24,7 @@ Requires `Idempotency-Key: <UUID>`.
 ```json
 {
   "user_id": "usr_abc123",
-  "amount": "100.00",
+  "amount": 100.00,
   "currency": "PEN",
   "payment_method": "fake_success"
 }
@@ -37,7 +37,9 @@ Requires `Idempotency-Key: <UUID>`.
 | `failed` | 422 | Confirmed rejection; stable error is replayed |
 | key conflict | 409 | UUID belongs to another normalized request |
 
-Money is accepted and returned as exact decimal text. JSON numbers are rejected because parsing a large numeric literal can lose precision before validation. The deterministic fake accepts `fake_success`, `fake_decline`, `fake_timeout`, and test-controlled `fake_delayed`. These are test scenarios, not a production provider contract.
+The challenge's numeric `amount` contract is supported from `0.01` through `1,000,000.00`; exact decimal strings are also accepted as an extension. This bound keeps conversion to integer cents exact after numeric normalization. Values with fractional cents or above the maximum return `400`. `amount` and `new_balance` are numeric while their stored cents fit JavaScript's safe-integer range. If an out-of-scope accumulated balance exceeds that range, the serializer returns exact decimal text rather than a rounded number.
+
+The deterministic fake accepts `fake_success`, `fake_decline`, `fake_timeout`, and test-controlled `fake_delayed`. These are test scenarios, not a production provider contract.
 
 ### `POST /webhooks/payment`
 
@@ -54,6 +56,8 @@ Requires `X-Webhook-Signature`, a hexadecimal HMAC-SHA256 of the exact raw body 
 ```
 
 The supported event types are `payment.succeeded` and `payment.failed`; failure events may include `failure_code`. Valid identical duplicates and old events receive `202`. Reusing an event ID with changed immutable identity returns `409`. Invalid signatures receive `401` before business processing.
+
+`sequence` accepts safe positive JSON integers for convenience. Values above `Number.MAX_SAFE_INTEGER` must be sent as decimal digit strings so the signed raw payload remains exact. The maximum is PostgreSQL `BIGINT` (`9223372036854775807`); unsafe numeric literals and larger strings return `400` instead of being rounded.
 
 ## Architecture
 
@@ -76,7 +80,7 @@ The request becomes integer minor units and fixed-field canonical data, then SHA
 
 ### Money and concurrency
 
-Persisted money uses `BIGINT`. Successful finalization locks the operation, inserts its unique ledger entry, atomically upserts `wallets.balance_minor = current + credit`, stores the resulting balance, and completes the operation in one transaction. Provider calls never occur inside it. PostgreSQL deadlock/serialization failures receive one bounded retry.
+Persisted money uses `BIGINT`, and each Cash-In is bounded to `1,000,000.00`. Successful finalization locks the operation, inserts its unique ledger entry, atomically upserts `wallets.balance_minor = current + credit`, stores the resulting balance, and completes the operation in one transaction. Provider calls never occur inside it. PostgreSQL deadlock/serialization failures receive one bounded retry. The response serializer preserves the challenge's numeric fields for all safe accumulated balances and deterministically falls back to exact decimal text if a balance ever exceeds safe JavaScript cents.
 
 ### Unknown outcomes
 

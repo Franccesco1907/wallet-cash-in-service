@@ -70,7 +70,7 @@ The challenge fixes the two route names but leaves parts of the provider and web
 
 - `POST /cash-in` requires an `Idempotency-Key` header containing a UUID.
 - The request uses the field names from the challenge: `user_id`, `amount`, `currency`, and `payment_method`.
-- `amount` is exact decimal text, must be positive, and may have at most two fractional digits. JSON numeric literals are rejected because precision can be lost before validation. It is converted once to integer minor units; persisted calculations never use floating-point amounts.
+- `amount` accepts the challenge's JSON numeric form and exact decimal text as an extension. It must be between `0.01` and `1,000,000.00` with at most two fractional digits. The bound makes numeric-to-cent normalization safe; it is converted once to integer minor units and persisted calculations never use floating-point amounts.
 - `currency` is normalized to uppercase. The initial slice supports `PEN`; unsupported currencies fail validation instead of being silently accepted.
 - `payment_method` is an opaque provider token. It is never logged.
 - `200 OK` means the operation is confirmed complete and returns the replayable stored balance.

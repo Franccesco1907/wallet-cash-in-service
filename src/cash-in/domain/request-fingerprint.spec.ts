@@ -1,7 +1,9 @@
 import {
   decimalToMinorUnits,
   minorUnitsToDecimal,
+  normalizeAmountInput,
   normalizeCurrency,
+  serializeMinorUnits,
 } from './money.js';
 import { requestFingerprint } from './request-fingerprint.js';
 
@@ -41,5 +43,23 @@ describe('cash-in request normalization', () => {
 
   it('formats balances beyond Number safe range without precision loss', () => {
     expect(minorUnitsToDecimal(9007199254740993n)).toBe('90071992547409.93');
+  });
+
+  it('rejects cash-in amounts above the documented maximum', () => {
+    expect(decimalToMinorUnits('1000000.00')).toBe(100000000n);
+    expect(() => decimalToMinorUnits('1000000.01')).toThrow(
+      'Amount must not exceed 1000000.00',
+    );
+  });
+
+  it('serializes safe cents as numbers and unsafe balances as text', () => {
+    expect(serializeMinorUnits(10000n)).toBe(100);
+    expect(serializeMinorUnits(9007199254740992n)).toBe('90071992547409.92');
+  });
+
+  it('normalizes bounded numeric amounts without accepting fractional cents', () => {
+    expect(normalizeAmountInput(123456.78)).toBe('123456.78');
+    expect(normalizeAmountInput(1.001)).toBeUndefined();
+    expect(normalizeAmountInput(1000000.01)).toBeUndefined();
   });
 });

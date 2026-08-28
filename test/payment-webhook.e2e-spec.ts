@@ -182,4 +182,68 @@ describe('POST /webhooks/payment', () => {
     await app.close();
     expect(mismatch.status).toBe(409);
   });
+
+  it('persists an exact webhook sequence above Number safe range', async () => {
+    const app = await createTestApp();
+    const cashIn = await request(app.getHttpServer())
+      .post('/cash-in')
+      .set('Idempotency-Key', randomUUID())
+      .send({
+        user_id: 'usr_exact_sequence',
+        amount: '5.00',
+        currency: 'PEN',
+        payment_method: 'fake_timeout',
+      });
+    const payload = {
+      event_id: 'evt_exact_sequence',
+      operation_id: cashIn.body.operation_id,
+      type: 'payment.succeeded',
+      sequence: '9007199254740993',
+      provider_payment_id: 'pay_exact_sequence',
+    };
+    const raw = JSON.stringify(payload);
+    const response = await request(app.getHttpServer())
+      .post('/webhooks/payment')
+      .set('Content-Type', 'application/json')
+      .set('X-Webhook-Signature', signature(raw))
+      .send(raw);
+    const client = new Client({ connectionString: databaseUrl });
+    await client.connect();
+    const event = await client.query<{ event_sequence: string }>(
+      'SELECT event_sequence FROM provider_events WHERE provider_event_id=$1',
+      ['evt_exact_sequence'],
+    );
+    await client.end();
+    await app.close();
+    expect(response.status).toBe(202);
+    expect(event.rows[0]?.event_sequence).toBe('9007199254740993');
+  });
+
+  it('rejects unsafe numeric webhook sequences instead of rounding them', async () => {
+    const app = await createTestApp();
+    const cashIn = await request(app.getHttpServer())
+      .post('/cash-in')
+      .set('Idempotency-Key', randomUUID())
+      .send({
+        user_id: 'usr_unsafe_sequence',
+        amount: '5.00',
+        currency: 'PEN',
+        payment_method: 'fake_timeout',
+      });
+    const payload = {
+      event_id: 'evt_unsafe_sequence',
+      operation_id: cashIn.body.operation_id,
+      type: 'payment.succeeded',
+      sequence: Number.MAX_SAFE_INTEGER + 1,
+      provider_payment_id: 'pay_unsafe_sequence',
+    };
+    const raw = JSON.stringify(payload);
+    const response = await request(app.getHttpServer())
+      .post('/webhooks/payment')
+      .set('Content-Type', 'application/json')
+      .set('X-Webhook-Signature', signature(raw))
+      .send(raw);
+    await app.close();
+    expect(response.status).toBe(400);
+  });
 });

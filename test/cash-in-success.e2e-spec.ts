@@ -50,8 +50,8 @@ describe('successful cash-in', () => {
     expect(first.status).toBe(200);
     expect(first.body).toMatchObject({
       status: 'completed',
-      amount: '100.00',
-      new_balance: '100.00',
+      amount: 100,
+      new_balance: 100,
     });
     expect(replay.status).toBe(200);
     expect(replay.body).toEqual(first.body);
@@ -60,35 +60,47 @@ describe('successful cash-in', () => {
     expect(FakePaymentProvider.calls()).toBe(1);
   });
 
-  it('preserves exact decimal responses beyond Number safe range', async () => {
+  it('accepts the challenge numeric payload and returns numeric money', async () => {
     const app = await createTestApp();
     const response = await request(app.getHttpServer())
       .post('/cash-in')
       .set('Idempotency-Key', randomUUID())
       .send({
-        user_id: 'usr_large_balance',
-        amount: '90071992547409.93',
+        user_id: 'usr_challenge_contract',
+        amount: 100.0,
         currency: 'PEN',
         payment_method: 'fake_success',
       });
     await app.close();
     expect(response.status).toBe(200);
-    expect(response.body.amount).toBe('90071992547409.93');
-    expect(response.body.new_balance).toBe('90071992547409.93');
+    expect(response.body.amount).toBe(100);
+    expect(response.body.new_balance).toBe(100);
   });
 
-  it('rejects numeric money input because exact decimal text is required', async () => {
+  it('accepts the maximum amount and rejects one cent above it', async () => {
     const app = await createTestApp();
-    const response = await request(app.getHttpServer())
+    const maximum = await request(app.getHttpServer())
       .post('/cash-in')
       .set('Idempotency-Key', randomUUID())
       .send({
-        user_id: 'usr_numeric_amount',
-        amount: 0.1,
+        user_id: 'usr_maximum',
+        amount: '1000000.00',
+        currency: 'PEN',
+        payment_method: 'fake_success',
+      });
+    const oversized = await request(app.getHttpServer())
+      .post('/cash-in')
+      .set('Idempotency-Key', randomUUID())
+      .send({
+        user_id: 'usr_oversized',
+        amount: '1000000.01',
         currency: 'PEN',
         payment_method: 'fake_success',
       });
     await app.close();
-    expect(response.status).toBe(400);
+    expect(maximum.status).toBe(200);
+    expect(maximum.body.amount).toBe(1000000);
+    expect(maximum.body.new_balance).toBe(1000000);
+    expect(oversized.status).toBe(400);
   });
 });

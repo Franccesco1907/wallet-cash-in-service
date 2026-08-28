@@ -91,3 +91,12 @@ Observed commands and outcomes from implementation. Sensitive values are omitted
 - GREEN: focused unit `11/11`, integration `3/3`, and corrected timeout/webhook/success e2e `9/9` passed.
 - REFACTOR: formatter/check, lint, build, unit `13/13`, integration `4/4`, e2e `14/14`, coverage, production audit, and diff check passed.
 - Runtime: real PostgreSQL proved terminal-state protection, exact `BIGINT` balances, migration identity column, restart recovery, status reconciliation, failure webhook, and immutable duplicate rejection. The `40P01` case remains explicitly a retry-policy simulation, not evidence of a real deadlock.
+
+## Transport-boundary re-verification correction
+
+- RED unit: `npm run test:unit -- src/cash-in/domain/request-fingerprint.spec.ts` -> `2` failures; `1000000.01` was accepted and an unsafe balance serialized as a rounded JSON number.
+- RED e2e: `npm run test:e2e -- test/cash-in-success.e2e-spec.ts test/payment-webhook.e2e-spec.ts` -> `5` failures; the challenge numeric amount returned `400`, monetary responses were strings, the maximum response was not numeric, an exact large sequence string returned `400`, and an unsafe numeric sequence returned `202`.
+- GREEN: the same focused unit and e2e commands passed `11/11` and `8/8` after bounded numeric normalization, safe/exact response serialization, and decimal-string webhook sequences were implemented.
+- REFACTOR: numeric normalization now applies magnitude-aware floating-point tolerance, and webhook validation bounds input length before `BigInt` conversion; focused unit/e2e verification remained green at `12/12` and `8/8`.
+- Runtime: signed raw webhook sequence `9007199254740993` persisted exactly when sent as text. Unsafe numeric sequence input is rejected before persistence, and Cash-In `1000000.01` returns `400` rather than reaching PostgreSQL.
+- Final gates: format check, lint, build, unit `16/16`, integration `4/4`, e2e `16/16`, coverage, production audit (`0` vulnerabilities), `git diff --check`, and full migration up/down/up all passed.

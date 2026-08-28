@@ -1,11 +1,13 @@
 import { Transform } from 'class-transformer';
 import { IsIn, IsString, Matches, MaxLength } from 'class-validator';
+import { normalizeAmountInput } from '../../domain/money.js';
 
 export class CreateCashInDto {
   @IsString()
   @MaxLength(128)
   user_id!: string;
 
+  @Transform(({ value }: { value: unknown }) => normalizeAmountInput(value))
   @IsString()
   @Matches(/^(?:0\.(?:0[1-9]|[1-9]\d?)|[1-9]\d*(?:\.\d{1,2})?)$/)
   amount!: string;

@@ -2,8 +2,8 @@ import { ConflictException, Inject, Injectable, Logger } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
 import {
   decimalToMinorUnits,
-  minorUnitsToDecimal,
   normalizeCurrency,
+  serializeMinorUnits,
 } from '../domain/money.js';
 import { OPERATION_STATE } from '../domain/operation-state.js';
 import { requestFingerprint } from '../domain/request-fingerprint.js';
@@ -40,8 +40,8 @@ export interface CashInCommand {
 export interface CashInResponse {
   operation_id: string;
   status: string;
-  amount: string;
-  new_balance?: string;
+  amount: number | string;
+  new_balance?: number | string;
   error_code?: string;
 }
 
@@ -129,10 +129,10 @@ export class CashInService {
     const response: CashInResponse = {
       operation_id: operation.operationId,
       status: operation.status.toLowerCase(),
-      amount: minorUnitsToDecimal(amountMinor),
+      amount: serializeMinorUnits(amountMinor),
     };
     if (operation.completedBalanceMinor !== null) {
-      response.new_balance = minorUnitsToDecimal(
+      response.new_balance = serializeMinorUnits(
         operation.completedBalanceMinor,
       );
     }
