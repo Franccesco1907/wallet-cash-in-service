@@ -103,4 +103,31 @@ describe('successful cash-in', () => {
     expect(maximum.body.new_balance).toBe(1000000);
     expect(oversized.status).toBe(400);
   });
+
+  it('returns exact decimal text when a numeric balance cannot round-trip to cents', async () => {
+    const client = new Client({ connectionString: databaseUrl });
+    await client.connect();
+    await client.query(
+      `INSERT INTO wallets (user_id, currency, balance_minor)
+       VALUES ($1, $2, $3)`,
+      ['usr_round_trip_boundary', 'PEN', '9007199254740000'],
+    );
+    await client.end();
+
+    const app = await createTestApp();
+    const response = await request(app.getHttpServer())
+      .post('/cash-in')
+      .set('Idempotency-Key', randomUUID())
+      .send({
+        user_id: 'usr_round_trip_boundary',
+        amount: '0.01',
+        currency: 'PEN',
+        payment_method: 'fake_success',
+      });
+    await app.close();
+
+    expect(response.status).toBe(200);
+    expect(response.body.amount).toBe(0.01);
+    expect(response.body.new_balance).toBe('90071992547400.01');
+  });
 });

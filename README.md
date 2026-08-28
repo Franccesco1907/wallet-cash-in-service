@@ -37,7 +37,7 @@ Requires `Idempotency-Key: <UUID>`.
 | `failed` | 422 | Confirmed rejection; stable error is replayed |
 | key conflict | 409 | UUID belongs to another normalized request |
 
-The challenge's numeric `amount` contract is supported from `0.01` through `1,000,000.00`; exact decimal strings are also accepted as an extension. This bound keeps conversion to integer cents exact after numeric normalization. Values with fractional cents or above the maximum return `400`. `amount` and `new_balance` are numeric while their stored cents fit JavaScript's safe-integer range. If an out-of-scope accumulated balance exceeds that range, the serializer returns exact decimal text rather than a rounded number.
+The challenge's numeric `amount` contract is supported from `0.01` through `1,000,000.00`; exact decimal strings are also accepted as an extension. This bound keeps conversion to integer cents exact after numeric normalization. Values with fractional cents or above the maximum return `400`. `amount` and `new_balance` are numeric only when the JSON number round-trips through exact decimal parsing to the original stored cents. Otherwise, the serializer returns canonical decimal text rather than a rounded number.
 
 The deterministic fake accepts `fake_success`, `fake_decline`, `fake_timeout`, and test-controlled `fake_delayed`. These are test scenarios, not a production provider contract.
 
@@ -80,7 +80,7 @@ The request becomes integer minor units and fixed-field canonical data, then SHA
 
 ### Money and concurrency
 
-Persisted money uses `BIGINT`, and each Cash-In is bounded to `1,000,000.00`. Successful finalization locks the operation, inserts its unique ledger entry, atomically upserts `wallets.balance_minor = current + credit`, stores the resulting balance, and completes the operation in one transaction. Provider calls never occur inside it. PostgreSQL deadlock/serialization failures receive one bounded retry. The response serializer preserves the challenge's numeric fields for all safe accumulated balances and deterministically falls back to exact decimal text if a balance ever exceeds safe JavaScript cents.
+Persisted money uses `BIGINT`, and each Cash-In is bounded to `1,000,000.00`. Successful finalization locks the operation, inserts its unique ledger entry, atomically upserts `wallets.balance_minor = current + credit`, stores the resulting balance, and completes the operation in one transaction. Provider calls never occur inside it. PostgreSQL deadlock/serialization failures receive one bounded retry. The response serializer preserves the challenge's numeric fields whenever exact cent round-trip proof succeeds and deterministically falls back to decimal text otherwise.
 
 ### Unknown outcomes
 

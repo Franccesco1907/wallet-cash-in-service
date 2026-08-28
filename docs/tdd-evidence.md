@@ -100,3 +100,11 @@ Observed commands and outcomes from implementation. Sensitive values are omitted
 - REFACTOR: numeric normalization now applies magnitude-aware floating-point tolerance, and webhook validation bounds input length before `BigInt` conversion; focused unit/e2e verification remained green at `12/12` and `8/8`.
 - Runtime: signed raw webhook sequence `9007199254740993` persisted exactly when sent as text. Unsafe numeric sequence input is rejected before persistence, and Cash-In `1000000.01` returns `400` rather than reaching PostgreSQL.
 - Final gates: format check, lint, build, unit `16/16`, integration `4/4`, e2e `16/16`, coverage, production audit (`0` vulnerabilities), `git diff --check`, and full migration up/down/up all passed.
+
+## Serializer round-trip correction
+
+- RED unit: focused money tests failed `1/12`; `9007199254740001` cents serialized as numeric `90071992547400.02` instead of exact `90071992547400.01`.
+- RED e2e: focused success tests failed `1/4`; the same accumulated wallet balance was rounded in the HTTP response.
+- GREEN: the serializer now returns a number only when its decimal representation parses back to the original minor units; focused unit `12/12` and success e2e `4/4` passed.
+- REFACTOR: exact decimal parsing is shared between Cash-In validation and serializer proof; the Cash-In maximum remains an application-level rule outside the shared parser.
+- Final gates: format/check, lint, build, unit `16/16`, integration `4/4`, e2e `17/17`, coverage, production audit (`0` vulnerabilities), migration up/down/up, teardown, and diff check passed.

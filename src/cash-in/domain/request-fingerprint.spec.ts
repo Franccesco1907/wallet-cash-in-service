@@ -54,7 +54,8 @@ describe('cash-in request normalization', () => {
 
   it('serializes safe cents as numbers and unsafe balances as text', () => {
     expect(serializeMinorUnits(10000n)).toBe(100);
-    expect(serializeMinorUnits(9007199254740992n)).toBe('90071992547409.92');
+    expect(serializeMinorUnits(9007199254740001n)).toBe('90071992547400.01');
+    expect(serializeMinorUnits(9007199254740992n)).toBe(90071992547409.92);
   });
 
   it('normalizes bounded numeric amounts without accepting fractional cents', () => {
