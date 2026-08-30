@@ -38,8 +38,7 @@
     "pg": "^8.23.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
-    "typeorm": "^1.1.0",
-    "zod": "^4.4.3"
+    "typeorm": "^1.1.0"
   },
   "devDependencies": {
     "@nestjs/cli": "^12.0.0",

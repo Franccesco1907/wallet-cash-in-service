@@ -1,35 +1,89 @@
-import { z } from 'zod';
+import 'reflect-metadata';
+import { Type, plainToInstance } from 'class-transformer';
+import {
+  IsDefined,
+  IsIn,
+  IsInt,
+  IsUrl,
+  Max,
+  Min,
+  MinLength,
+  validateSync,
+} from 'class-validator';
 
-const localEnvironmentSchema = z.object({
-  NODE_ENV: z.enum(['development', 'test']).default('development'),
-  PORT: z.coerce.number().int().positive().default(3000),
-  DATABASE_URL: z
-    .url()
-    .default(
-      'postgresql://wallet:wallet_test@localhost:55432/wallet_cash_in_test',
-    ),
-  WEBHOOK_SECRET: z.string().min(16).default('local-development-secret'),
-});
+const ENVIRONMENT_MODE = {
+  DEVELOPMENT: 'development',
+  TEST: 'test',
+  PRODUCTION: 'production',
+} as const;
 
-const productionEnvironmentSchema = z.object({
-  NODE_ENV: z.literal('production'),
-  PORT: z.coerce.number().int().positive().default(3000),
-  DATABASE_URL: z.url(),
-  WEBHOOK_SECRET: z.string().min(16),
-});
+type EnvironmentMode = (typeof ENVIRONMENT_MODE)[keyof typeof ENVIRONMENT_MODE];
 
-const environmentSchema = z.discriminatedUnion('NODE_ENV', [
-  localEnvironmentSchema,
-  productionEnvironmentSchema,
-]);
+const DEFAULT_PORT = 3000;
+const LOCAL_DATABASE_URL =
+  'postgresql://wallet:wallet_test@localhost:55432/wallet_cash_in_test';
+const LOCAL_WEBHOOK_SECRET = 'local-development-secret';
 
-export type Environment = z.infer<typeof environmentSchema>;
+export interface Environment {
+  NODE_ENV: EnvironmentMode;
+  PORT: number;
+  DATABASE_URL: string;
+  WEBHOOK_SECRET: string;
+}
+
+class EnvironmentVariables implements Environment {
+  @IsIn(Object.values(ENVIRONMENT_MODE))
+  NODE_ENV!: EnvironmentMode;
+
+  @Type(() => Number)
+  @IsInt()
+  @Max(65535)
+  @Min(1)
+  PORT!: number;
+
+  @IsDefined()
+  @IsUrl({
+    protocols: ['postgres', 'postgresql'],
+    require_protocol: true,
+    require_tld: false,
+  })
+  DATABASE_URL!: string;
+
+  @IsDefined()
+  @MinLength(16)
+  WEBHOOK_SECRET!: string;
+}
 
 export function parseEnvironment(
   source: NodeJS.ProcessEnv = process.env,
 ): Environment {
-  return environmentSchema.parse({
-    ...source,
-    NODE_ENV: source.NODE_ENV ?? 'development',
+  const nodeEnvironment = source.NODE_ENV ?? ENVIRONMENT_MODE.DEVELOPMENT;
+  const isProduction = nodeEnvironment === ENVIRONMENT_MODE.PRODUCTION;
+  const environment = plainToInstance(EnvironmentVariables, {
+    NODE_ENV: nodeEnvironment,
+    PORT: source.PORT ?? DEFAULT_PORT,
+    DATABASE_URL:
+      source.DATABASE_URL ?? (isProduction ? undefined : LOCAL_DATABASE_URL),
+    WEBHOOK_SECRET:
+      source.WEBHOOK_SECRET ??
+      (isProduction ? undefined : LOCAL_WEBHOOK_SECRET),
   });
+
+  const errors = validateSync(environment, {
+    validationError: { target: false, value: false },
+  });
+  if (errors.length > 0) {
+    const invalidProperties = errors
+      .map(({ property }) => property)
+      .sort()
+      .join(', ');
+    throw new Error(`Configuration validation error: ${invalidProperties}`);
+  }
+
+  return {
+    NODE_ENV: environment.NODE_ENV,
+    PORT: environment.PORT,
+    DATABASE_URL: environment.DATABASE_URL,
+    WEBHOOK_SECRET: environment.WEBHOOK_SECRET,
+  };
 }

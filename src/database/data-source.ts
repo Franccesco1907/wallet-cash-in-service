@@ -1,9 +1,9 @@
 import 'reflect-metadata';
 import { DataSource } from 'typeorm';
-import { parseEnvironment } from '../config/environment.js';
-import { InitialSchema2026082700001 } from './migrations/2026082700001-initial-schema.js';
-import { ProviderEventIdentity2026082700002 } from './migrations/2026082700002-provider-event-identity.js';
-import { ProviderPaymentUniqueness2026082800001 } from './migrations/2026082800001-provider-payment-uniqueness.js';
+import { parseEnvironment } from '../config/environment.ts';
+import { InitialSchema2026082700001 } from './migrations/2026082700001-initial-schema.ts';
+import { ProviderEventIdentity2026082700002 } from './migrations/2026082700002-provider-event-identity.ts';
+import { ProviderPaymentUniqueness2026082800001 } from './migrations/2026082800001-provider-payment-uniqueness.ts';
 
 const environment = parseEnvironment();
 
