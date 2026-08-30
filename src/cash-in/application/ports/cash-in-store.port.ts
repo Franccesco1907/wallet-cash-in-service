@@ -1,4 +1,4 @@
-import type { OperationState } from '../../domain/operation-state.js';
+import type { OperationState } from '../../domain/operation-state.ts';
 
 export interface CreateOperationInput {
   operationId: string;

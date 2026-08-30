@@ -1,5 +1,5 @@
 import { validateSync } from 'class-validator';
-import { PaymentWebhookDto } from './payment-webhook.dto.js';
+import { PaymentWebhookDto } from './payment-webhook.dto.ts';
 
 function validWebhook(): PaymentWebhookDto {
   return Object.assign(new PaymentWebhookDto(), {

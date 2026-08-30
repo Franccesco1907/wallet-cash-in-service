@@ -4,8 +4,8 @@ import {
   normalizeAmountInput,
   normalizeCurrency,
   serializeMinorUnits,
-} from './money.js';
-import { requestFingerprint } from './request-fingerprint.js';
+} from './money.ts';
+import { requestFingerprint } from './request-fingerprint.ts';
 
 describe('cash-in request normalization', () => {
   it.each([

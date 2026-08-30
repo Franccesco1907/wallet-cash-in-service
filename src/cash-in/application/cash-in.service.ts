@@ -4,62 +4,32 @@ import {
   decimalToMinorUnits,
   normalizeCurrency,
   serializeMinorUnits,
-} from '../domain/money.js';
-import { OPERATION_STATE } from '../domain/operation-state.js';
-import { requestFingerprint } from '../domain/request-fingerprint.js';
-import { CorrelationContext } from '../../shared/observability/correlation-context.js';
+} from '../domain/money.ts';
+import { OPERATION_STATE } from '../domain/operation-state.ts';
+import { requestFingerprint } from '../domain/request-fingerprint.ts';
+import { CorrelationContext } from '../../shared/observability/correlation-context.ts';
+import type { CashInCommand } from './commands/cash-in.command.ts';
+import {
+  PAYMENT_EVENT_TYPE,
+  type PaymentWebhookCommand,
+} from './commands/payment-webhook.command.ts';
 import {
   CASH_IN_STORE,
   PROVIDER_EVENT_DECISION,
   type CashInOperation,
   type CashInStorePort,
   ProviderPaymentConflictError,
-} from './ports/cash-in-store.port.js';
+} from './ports/cash-in-store.port.ts';
 import {
   PAYMENT_PROVIDER,
   PROVIDER_RESULT,
   type ChargeResult,
   type PaymentProviderPort,
-} from './ports/payment-provider.port.js';
-
-export const PAYMENT_EVENT_TYPE = {
-  SUCCEEDED: 'payment.succeeded',
-  FAILED: 'payment.failed',
-} as const;
-
-export type PaymentEventType =
-  (typeof PAYMENT_EVENT_TYPE)[keyof typeof PAYMENT_EVENT_TYPE];
-
-export interface CashInCommand {
-  idempotencyKey: string;
-  userId: string;
-  amount: string;
-  currency: string;
-  paymentMethod: string;
-}
-
-export interface CashInResponse {
-  operation_id: string;
-  status: string;
-  amount: number | string;
-  new_balance?: number | string;
-  error_code?: string;
-}
-
-export interface CashInExecution {
-  httpStatus: number;
-  response: CashInResponse;
-}
-
-export interface PaymentWebhookCommand {
-  eventId: string;
-  operationId: string;
-  eventType: PaymentEventType;
-  sequence: bigint;
-  providerPaymentId: string;
-  payloadHash: string;
-  failureCode: string | null;
-}
+} from './ports/payment-provider.port.ts';
+import type {
+  CashInExecution,
+  CashInResponse,
+} from './responses/cash-in.response.ts';
 
 @Injectable()
 export class CashInService {
@@ -139,15 +109,13 @@ export class CashInService {
     }
     if (operation.failureCode !== null)
       response.error_code = operation.failureCode;
-    return {
-      httpStatus:
-        operation.status === 'COMPLETED'
-          ? 200
-          : operation.status === 'FAILED'
-            ? 422
-            : 202,
-      response,
-    };
+    let httpStatus = 202;
+    if (operation.status === OPERATION_STATE.COMPLETED) {
+      httpStatus = 200;
+    } else if (operation.status === OPERATION_STATE.FAILED) {
+      httpStatus = 422;
+    }
+    return { httpStatus, response };
   }
 
   async handlePaymentWebhook(command: PaymentWebhookCommand): Promise<void> {
