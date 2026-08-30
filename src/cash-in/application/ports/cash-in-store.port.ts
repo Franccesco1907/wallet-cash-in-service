@@ -29,6 +29,13 @@ export interface CompletionResult {
   resultingBalanceMinor: bigint | null;
 }
 
+export class ProviderPaymentConflictError extends Error {
+  constructor() {
+    super('Provider payment is already assigned to another operation');
+    this.name = ProviderPaymentConflictError.name;
+  }
+}
+
 export const PROVIDER_EVENT_DECISION = {
   PROCESS: 'PROCESS',
   DUPLICATE: 'DUPLICATE',

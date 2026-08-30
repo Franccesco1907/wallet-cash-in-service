@@ -14,6 +14,7 @@ import {
   type CompletionResult,
   type CreateOperationInput,
   type OperationClaim,
+  ProviderPaymentConflictError,
   type ProviderEventDecision,
   type ProviderEventInput,
 } from '../../application/ports/cash-in-store.port.js';
@@ -60,6 +61,27 @@ function mapOperation(row: OperationRow): CashInOperation {
         ? null
         : BigInt(row.completed_balance_minor),
   };
+}
+
+function matchesProviderPaymentConflict(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    error.code === '23505' &&
+    'constraint' in error &&
+    error.constraint === 'UQ_cash_in_operations_provider_payment_id'
+  );
+}
+
+function isProviderPaymentConflict(error: unknown): boolean {
+  if (matchesProviderPaymentConflict(error)) return true;
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'driverError' in error &&
+    matchesProviderPaymentConflict(error.driverError)
+  );
 }
 
 @Injectable()
@@ -121,86 +143,93 @@ export class PostgresCashInStore implements CashInStorePort {
     operationId: string,
     providerPaymentId: string,
   ): Promise<CompletionResult> {
-    return withTransientTransactionRetry(() =>
-      this.dataSource.transaction(async (manager) => {
-        const operationRows = await manager.query<OperationRow[]>(
-          'SELECT * FROM cash_in_operations WHERE operation_id=$1 FOR UPDATE',
-          [operationId],
-        );
-        const row = operationRows[0];
-        if (!row) throw new Error('Cash-in operation not found');
-        if (row.status === OPERATION_STATE.COMPLETED) {
+    try {
+      return await withTransientTransactionRetry(() =>
+        this.dataSource.transaction(async (manager) => {
+          const operationRows = await manager.query<OperationRow[]>(
+            'SELECT * FROM cash_in_operations WHERE operation_id=$1 FOR UPDATE',
+            [operationId],
+          );
+          const row = operationRows[0];
+          if (!row) throw new Error('Cash-in operation not found');
+          if (row.status === OPERATION_STATE.COMPLETED) {
+            return {
+              operation: mapOperation(row),
+              applied: false,
+              resultingBalanceMinor: BigInt(row.completed_balance_minor ?? '0'),
+            };
+          }
+          if (
+            row.status !== OPERATION_STATE.PAYMENT_REQUESTED &&
+            row.status !== OPERATION_STATE.AWAITING_CONFIRMATION
+          ) {
+            return {
+              operation: mapOperation(row),
+              applied: false,
+              resultingBalanceMinor: null,
+            };
+          }
+          await manager.query(
+            `INSERT INTO wallet_ledger
+           (ledger_id, operation_id, user_id, currency, amount_minor, resulting_balance_minor)
+           VALUES ($1,$2,$3,$4,$5,0)
+           ON CONFLICT (operation_id) DO NOTHING`,
+            [
+              randomUUID(),
+              row.operation_id,
+              row.user_id,
+              row.currency,
+              row.amount_minor,
+            ],
+          );
+          await manager.query(
+            `INSERT INTO wallets (user_id, currency, balance_minor)
+           VALUES ($1,$2,$3)
+           ON CONFLICT (user_id, currency) DO UPDATE
+             SET balance_minor = wallets.balance_minor + EXCLUDED.balance_minor,
+                 updated_at = now()
+          `,
+            [row.user_id, row.currency, row.amount_minor],
+          );
+          const walletRows = await manager.query<
+            Array<{ balance_minor: string }>
+          >(
+            'SELECT balance_minor FROM wallets WHERE user_id=$1 AND currency=$2',
+            [row.user_id, row.currency],
+          );
+          const balance = BigInt(walletRows[0]?.balance_minor ?? '0');
+          await manager.query(
+            'UPDATE wallet_ledger SET resulting_balance_minor=$2 WHERE operation_id=$1',
+            [operationId, balance.toString()],
+          );
+          await manager.query(
+            `UPDATE cash_in_operations
+           SET status=$2, provider_payment_id=$3, completed_balance_minor=$4, updated_at=now()
+           WHERE operation_id=$1`,
+            [
+              operationId,
+              OPERATION_STATE.COMPLETED,
+              providerPaymentId,
+              balance.toString(),
+            ],
+          );
+          const completedRows = await manager.query<OperationRow[]>(
+            'SELECT * FROM cash_in_operations WHERE operation_id=$1',
+            [operationId],
+          );
           return {
-            operation: mapOperation(row),
-            applied: false,
-            resultingBalanceMinor: BigInt(row.completed_balance_minor ?? '0'),
+            operation: mapOperation(completedRows[0]!),
+            applied: true,
+            resultingBalanceMinor: balance,
           };
-        }
-        if (
-          row.status !== OPERATION_STATE.PAYMENT_REQUESTED &&
-          row.status !== OPERATION_STATE.AWAITING_CONFIRMATION
-        ) {
-          return {
-            operation: mapOperation(row),
-            applied: false,
-            resultingBalanceMinor: null,
-          };
-        }
-        await manager.query(
-          `INSERT INTO wallet_ledger
-         (ledger_id, operation_id, user_id, currency, amount_minor, resulting_balance_minor)
-         VALUES ($1,$2,$3,$4,$5,0)
-         ON CONFLICT (operation_id) DO NOTHING`,
-          [
-            randomUUID(),
-            row.operation_id,
-            row.user_id,
-            row.currency,
-            row.amount_minor,
-          ],
-        );
-        await manager.query(
-          `INSERT INTO wallets (user_id, currency, balance_minor)
-         VALUES ($1,$2,$3)
-         ON CONFLICT (user_id, currency) DO UPDATE
-           SET balance_minor = wallets.balance_minor + EXCLUDED.balance_minor,
-               updated_at = now()
-        `,
-          [row.user_id, row.currency, row.amount_minor],
-        );
-        const walletRows = await manager.query<
-          Array<{ balance_minor: string }>
-        >(
-          'SELECT balance_minor FROM wallets WHERE user_id=$1 AND currency=$2',
-          [row.user_id, row.currency],
-        );
-        const balance = BigInt(walletRows[0]?.balance_minor ?? '0');
-        await manager.query(
-          'UPDATE wallet_ledger SET resulting_balance_minor=$2 WHERE operation_id=$1',
-          [operationId, balance.toString()],
-        );
-        await manager.query(
-          `UPDATE cash_in_operations
-         SET status=$2, provider_payment_id=$3, completed_balance_minor=$4, updated_at=now()
-         WHERE operation_id=$1`,
-          [
-            operationId,
-            OPERATION_STATE.COMPLETED,
-            providerPaymentId,
-            balance.toString(),
-          ],
-        );
-        const completedRows = await manager.query<OperationRow[]>(
-          'SELECT * FROM cash_in_operations WHERE operation_id=$1',
-          [operationId],
-        );
-        return {
-          operation: mapOperation(completedRows[0]!),
-          applied: true,
-          resultingBalanceMinor: balance,
-        };
-      }),
-    );
+        }),
+      );
+    } catch (error: unknown) {
+      if (isProviderPaymentConflict(error)) {
+        throw new ProviderPaymentConflictError();
+      }
+      throw error;
+    }
   }
 
   async markFailed(operationId: string, failureCode: string): Promise<void> {
