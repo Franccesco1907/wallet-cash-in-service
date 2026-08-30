@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import request from 'supertest';
 import { Client } from 'pg';
-import { FakePaymentProvider } from '../src/cash-in/infrastructure/payment/fake-payment-provider.adapter.js';
-import { createTestApp } from './test-app.js';
+import { FakePaymentProvider } from '../src/cash-in/infrastructure/payment/fake-payment-provider.adapter.ts';
+import { createTestApp } from './test-app.ts';
 
 const databaseUrl =
   process.env.DATABASE_URL ??

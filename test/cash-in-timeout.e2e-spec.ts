@@ -1,12 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { Client } from 'pg';
 import request from 'supertest';
-import { FakePaymentProvider } from '../src/cash-in/infrastructure/payment/fake-payment-provider.adapter.js';
-import { PROVIDER_RESULT } from '../src/cash-in/application/ports/payment-provider.port.js';
+import { FakePaymentProvider } from '../src/cash-in/infrastructure/payment/fake-payment-provider.adapter.ts';
+import { PROVIDER_RESULT } from '../src/cash-in/application/ports/payment-provider.port.ts';
 import { DataSource } from 'typeorm';
-import { PostgresCashInStore } from '../src/cash-in/infrastructure/persistence/postgres-cash-in.store.js';
-import { requestFingerprint } from '../src/cash-in/domain/request-fingerprint.js';
-import { createTestApp } from './test-app.js';
+import { PostgresCashInStore } from '../src/cash-in/infrastructure/persistence/postgres-cash-in.store.ts';
+import { requestFingerprint } from '../src/cash-in/domain/request-fingerprint.ts';
+import { createTestApp } from './test-app.ts';
 
 const databaseUrl =
   process.env.DATABASE_URL ??

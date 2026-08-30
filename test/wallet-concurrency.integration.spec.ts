@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import { AppDataSource } from '../src/database/data-source.js';
-import { PostgresCashInStore } from '../src/cash-in/infrastructure/persistence/postgres-cash-in.store.js';
-import { withTransientTransactionRetry } from '../src/database/transaction-retry.js';
+import { AppDataSource } from '../src/database/data-source.ts';
+import { PostgresCashInStore } from '../src/cash-in/infrastructure/persistence/postgres-cash-in.store.ts';
+import { withTransientTransactionRetry } from '../src/database/transaction-retry.ts';
 
 describe('wallet balance concurrency', () => {
   beforeAll(async () => {
