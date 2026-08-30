@@ -1,6 +1,6 @@
 import { Client } from 'pg';
 import { DataSource } from 'typeorm';
-import { ProviderPaymentUniqueness2026082800001 } from '../src/database/migrations/2026082800001-provider-payment-uniqueness.js';
+import { ProviderPaymentUniqueness2026082800001 } from '../src/database/migrations/2026082800001-provider-payment-uniqueness.ts';
 
 const databaseUrl =
   process.env.DATABASE_URL ??

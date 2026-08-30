@@ -2,11 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { randomUUID } from 'node:crypto';
-import { withTransientTransactionRetry } from '../../../database/transaction-retry.js';
-import {
-  OPERATION_STATE,
-  type OperationState,
-} from '../../domain/operation-state.js';
+import { withTransientTransactionRetry } from '../../../database/transaction-retry.ts';
+import { OPERATION_STATE } from '../../domain/operation-state.ts';
 import {
   PROVIDER_EVENT_DECISION,
   type CashInOperation,
@@ -17,50 +14,23 @@ import {
   ProviderPaymentConflictError,
   type ProviderEventDecision,
   type ProviderEventInput,
-} from '../../application/ports/cash-in-store.port.js';
+} from '../../application/ports/cash-in-store.port.ts';
+import { mapOperation } from './postgres-cash-in.mapper.ts';
+import type {
+  OperationRow,
+  ProviderEventRow,
+} from './postgres-cash-in.rows.ts';
 
-interface OperationRow {
-  operation_id: string;
-  idempotency_key: string;
-  request_fingerprint: string;
-  provider_request_key: string;
-  user_id: string;
-  amount_minor: string;
-  currency: string;
-  payment_method: string;
-  status: string;
-  provider_payment_id: string | null;
-  failure_code: string | null;
-  completed_balance_minor: string | null;
+interface CashInOperationTable extends OperationRow {
+  provider_event_sequence: string;
+  created_at: Date;
+  updated_at: Date;
 }
 
-interface ProviderEventRow {
-  operation_id: string;
-  provider_payment_id: string;
-  event_type: string;
-  event_sequence: string;
-  payload_hash: string;
-  processing_status: string;
-}
-
-function mapOperation(row: OperationRow): CashInOperation {
-  return {
-    operationId: row.operation_id,
-    idempotencyKey: row.idempotency_key,
-    requestFingerprint: row.request_fingerprint,
-    providerRequestKey: row.provider_request_key,
-    userId: row.user_id,
-    amountMinor: BigInt(row.amount_minor),
-    currency: row.currency,
-    paymentMethod: row.payment_method,
-    status: row.status as OperationState,
-    providerPaymentId: row.provider_payment_id,
-    failureCode: row.failure_code,
-    completedBalanceMinor:
-      row.completed_balance_minor === null
-        ? null
-        : BigInt(row.completed_balance_minor),
-  };
+interface ProviderEventTable extends ProviderEventRow {
+  provider_event_id: string;
+  created_at: Date;
+  processed_at: Date | null;
 }
 
 function matchesProviderPaymentConflict(error: unknown): boolean {
@@ -132,11 +102,13 @@ export class PostgresCashInStore implements CashInStorePort {
   }
 
   async getById(operationId: string): Promise<CashInOperation | null> {
-    const rows = await this.dataSource.query<OperationRow[]>(
-      'SELECT * FROM cash_in_operations WHERE operation_id=$1',
-      [operationId],
-    );
-    return rows[0] ? mapOperation(rows[0]) : null;
+    const row = await this.dataSource
+      .createQueryBuilder()
+      .select('*')
+      .from<CashInOperationTable>('cash_in_operations', 'operation')
+      .where('operation.operation_id = :operationId', { operationId })
+      .getRawOne<OperationRow>();
+    return row ? mapOperation(row) : null;
   }
 
   async finalizeCompleted(
@@ -233,30 +205,37 @@ export class PostgresCashInStore implements CashInStorePort {
   }
 
   async markFailed(operationId: string, failureCode: string): Promise<void> {
-    await this.dataSource.query(
-      `UPDATE cash_in_operations
-       SET status=$2, failure_code=$3, updated_at=now()
-       WHERE operation_id=$1 AND status IN ($4,$5)`,
-      [
-        operationId,
-        OPERATION_STATE.FAILED,
-        failureCode,
-        OPERATION_STATE.PAYMENT_REQUESTED,
-        OPERATION_STATE.AWAITING_CONFIRMATION,
-      ],
-    );
+    await this.dataSource
+      .createQueryBuilder()
+      .update<CashInOperationTable>('cash_in_operations')
+      .set({
+        status: OPERATION_STATE.FAILED,
+        failure_code: failureCode,
+        updated_at: () => 'now()',
+      })
+      .where('operation_id = :operationId', { operationId })
+      .andWhere('status IN (:...allowedStatuses)', {
+        allowedStatuses: [
+          OPERATION_STATE.PAYMENT_REQUESTED,
+          OPERATION_STATE.AWAITING_CONFIRMATION,
+        ],
+      })
+      .execute();
   }
 
   async markAwaitingConfirmation(operationId: string): Promise<void> {
-    await this.dataSource.query(
-      `UPDATE cash_in_operations SET status=$2, updated_at=now()
-       WHERE operation_id=$1 AND status=$3`,
-      [
-        operationId,
-        OPERATION_STATE.AWAITING_CONFIRMATION,
-        OPERATION_STATE.PAYMENT_REQUESTED,
-      ],
-    );
+    await this.dataSource
+      .createQueryBuilder()
+      .update<CashInOperationTable>('cash_in_operations')
+      .set({
+        status: OPERATION_STATE.AWAITING_CONFIRMATION,
+        updated_at: () => 'now()',
+      })
+      .where('operation_id = :operationId', { operationId })
+      .andWhere('status = :expectedStatus', {
+        expectedStatus: OPERATION_STATE.PAYMENT_REQUESTED,
+      })
+      .execute();
   }
 
   async recordProviderEvent(
@@ -325,21 +304,29 @@ export class PostgresCashInStore implements CashInStorePort {
   }
 
   async markProviderEventProcessed(eventId: string): Promise<void> {
-    await this.dataSource.query(
-      `UPDATE provider_events
-       SET processing_status='PROCESSED', processed_at=now()
-       WHERE provider_event_id=$1 AND processing_status='RECEIVED'`,
-      [eventId],
-    );
+    await this.dataSource
+      .createQueryBuilder()
+      .update<ProviderEventTable>('provider_events')
+      .set({
+        processing_status: 'PROCESSED',
+        processed_at: () => 'now()',
+      })
+      .where('provider_event_id = :eventId', { eventId })
+      .andWhere('processing_status = :expectedStatus', {
+        expectedStatus: 'RECEIVED',
+      })
+      .execute();
   }
 
   private async findByIdempotencyKey(
     key: string,
   ): Promise<CashInOperation | null> {
-    const rows = await this.dataSource.query<OperationRow[]>(
-      'SELECT * FROM cash_in_operations WHERE idempotency_key=$1',
-      [key],
-    );
-    return rows[0] ? mapOperation(rows[0]) : null;
+    const row = await this.dataSource
+      .createQueryBuilder()
+      .select('*')
+      .from<CashInOperationTable>('cash_in_operations', 'operation')
+      .where('operation.idempotency_key = :key', { key })
+      .getRawOne<OperationRow>();
+    return row ? mapOperation(row) : null;
   }
 }
