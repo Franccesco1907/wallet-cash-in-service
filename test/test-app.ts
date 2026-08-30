@@ -1,7 +1,7 @@
 import { ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import type { INestApplication } from '@nestjs/common';
-import { AppModule } from '../src/app.module.js';
+import { AppModule } from '../src/app.module.ts';
 
 export async function createTestApp(): Promise<INestApplication> {
   const module = await Test.createTestingModule({
