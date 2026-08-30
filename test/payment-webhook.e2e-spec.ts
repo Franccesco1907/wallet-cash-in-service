@@ -246,4 +246,99 @@ describe('POST /webhooks/payment', () => {
     await app.close();
     expect(response.status).toBe(400);
   });
+
+  it('rejects a provider payment collision without crediting the second operation', async () => {
+    const app = await createTestApp();
+    const firstCashIn = await request(app.getHttpServer())
+      .post('/cash-in')
+      .set('Idempotency-Key', randomUUID())
+      .send({
+        user_id: 'usr_payment_collision',
+        amount: '10.00',
+        currency: 'PEN',
+        payment_method: 'fake_timeout',
+      });
+    const secondCashIn = await request(app.getHttpServer())
+      .post('/cash-in')
+      .set('Idempotency-Key', randomUUID())
+      .send({
+        user_id: 'usr_payment_collision',
+        amount: '20.00',
+        currency: 'PEN',
+        payment_method: 'fake_timeout',
+      });
+    const firstPayload = {
+      event_id: 'evt_payment_owner',
+      operation_id: firstCashIn.body.operation_id,
+      type: 'payment.succeeded',
+      sequence: 1,
+      provider_payment_id: 'pay_shared_collision',
+    };
+    const firstRaw = JSON.stringify(firstPayload);
+    const firstWebhook = await request(app.getHttpServer())
+      .post('/webhooks/payment')
+      .set('Content-Type', 'application/json')
+      .set('X-Webhook-Signature', signature(firstRaw))
+      .send(firstRaw);
+    const secondPayload = {
+      ...firstPayload,
+      event_id: 'evt_payment_collision',
+      operation_id: secondCashIn.body.operation_id,
+    };
+    const secondRaw = JSON.stringify(secondPayload);
+    const collision = await request(app.getHttpServer())
+      .post('/webhooks/payment')
+      .set('Content-Type', 'application/json')
+      .set('X-Webhook-Signature', signature(secondRaw))
+      .send(secondRaw);
+
+    const client = new Client({ connectionString: databaseUrl });
+    await client.connect();
+    const wallet = await client.query<{ balance_minor: string }>(
+      'SELECT balance_minor FROM wallets WHERE user_id=$1 AND currency=$2',
+      ['usr_payment_collision', 'PEN'],
+    );
+    const ledger = await client.query<{ operation_id: string }>(
+      'SELECT operation_id FROM wallet_ledger ORDER BY created_at',
+    );
+    const operations = await client.query<{
+      operation_id: string;
+      status: string;
+      provider_payment_id: string | null;
+      completed_balance_minor: string | null;
+    }>(
+      `SELECT operation_id, status, provider_payment_id, completed_balance_minor
+       FROM cash_in_operations
+       WHERE operation_id IN ($1, $2)`,
+      [firstCashIn.body.operation_id, secondCashIn.body.operation_id],
+    );
+    await client.end();
+    await app.close();
+
+    const firstOperation = operations.rows.find(
+      (operation) => operation.operation_id === firstCashIn.body.operation_id,
+    );
+    const secondOperation = operations.rows.find(
+      (operation) => operation.operation_id === secondCashIn.body.operation_id,
+    );
+    expect(firstWebhook.status).toBe(202);
+    expect(collision.status).toBe(409);
+    expect(collision.body.message).toBe(
+      'Provider payment is already assigned to another operation',
+    );
+    expect(wallet.rows[0]?.balance_minor).toBe('1000');
+    expect(ledger.rows).toEqual([
+      expect.objectContaining({ operation_id: firstCashIn.body.operation_id }),
+    ]);
+    expect(firstOperation).toMatchObject({
+      status: 'COMPLETED',
+      provider_payment_id: 'pay_shared_collision',
+      completed_balance_minor: '1000',
+    });
+    expect(secondOperation).toMatchObject({
+      status: 'AWAITING_CONFIRMATION',
+      provider_payment_id: null,
+      completed_balance_minor: null,
+    });
+  });
 });

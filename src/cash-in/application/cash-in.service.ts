@@ -13,6 +13,7 @@ import {
   PROVIDER_EVENT_DECISION,
   type CashInOperation,
   type CashInStorePort,
+  ProviderPaymentConflictError,
 } from './ports/cash-in-store.port.js';
 import {
   PAYMENT_PROVIDER,
@@ -163,7 +164,7 @@ export class CashInService {
     }
     if (decision === PROVIDER_EVENT_DECISION.PROCESS) {
       if (command.eventType === PAYMENT_EVENT_TYPE.SUCCEEDED) {
-        await this.store.finalizeCompleted(
+        await this.finalizeCompleted(
           command.operationId,
           command.providerPaymentId,
         );
@@ -225,7 +226,7 @@ export class CashInService {
     result: ChargeResult,
   ): Promise<void> {
     if (result.kind === PROVIDER_RESULT.SUCCESS && result.providerPaymentId) {
-      await this.store.finalizeCompleted(operationId, result.providerPaymentId);
+      await this.finalizeCompleted(operationId, result.providerPaymentId);
     } else if (result.kind === PROVIDER_RESULT.REJECTED) {
       await this.store.markFailed(
         operationId,
@@ -233,6 +234,20 @@ export class CashInService {
       );
     } else {
       await this.store.markAwaitingConfirmation(operationId);
+    }
+  }
+
+  private async finalizeCompleted(
+    operationId: string,
+    providerPaymentId: string,
+  ): Promise<void> {
+    try {
+      await this.store.finalizeCompleted(operationId, providerPaymentId);
+    } catch (error: unknown) {
+      if (error instanceof ProviderPaymentConflictError) {
+        throw new ConflictException(error.message);
+      }
+      throw error;
     }
   }
 }

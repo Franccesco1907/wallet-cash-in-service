@@ -1,9 +1,11 @@
 import { Transform } from 'class-transformer';
 import {
   IsIn,
+  IsNotEmpty,
   IsOptional,
   IsString,
   IsUUID,
+  MaxLength,
   registerDecorator,
   type ValidationOptions,
 } from 'class-validator';
@@ -47,6 +49,8 @@ function IsPostgresBigint(
 
 export class PaymentWebhookDto {
   @IsString()
+  @IsNotEmpty()
+  @MaxLength(128)
   event_id!: string;
 
   @IsUUID()
@@ -63,9 +67,13 @@ export class PaymentWebhookDto {
   sequence!: string;
 
   @IsString()
+  @IsNotEmpty()
+  @MaxLength(128)
   provider_payment_id!: string;
 
   @IsOptional()
   @IsString()
-  failure_code?: string;
+  @IsNotEmpty()
+  @MaxLength(64)
+  failure_code?: string | null;
 }
