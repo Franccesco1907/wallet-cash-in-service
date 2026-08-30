@@ -1,4 +1,4 @@
-import { OPERATION_STATE, type OperationState } from './operation-state.js';
+import { OPERATION_STATE, type OperationState } from './operation-state.ts';
 
 const TRANSITIONS: Readonly<Record<OperationState, readonly OperationState[]>> =
   {

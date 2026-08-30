@@ -1,5 +1,5 @@
-import { OPERATION_STATE } from './operation-state.js';
-import { assertTransition } from './operation-state.policy.js';
+import { OPERATION_STATE } from './operation-state.ts';
+import { assertTransition } from './operation-state.policy.ts';
 
 describe('operation state policy', () => {
   it('rejects a transition from a terminal state', () => {

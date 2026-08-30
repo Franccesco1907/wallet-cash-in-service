@@ -7,13 +7,10 @@ import {
   Res,
 } from '@nestjs/common';
 import type { Response } from 'express';
-import { IsUUID } from 'class-validator';
-import { validateSync } from 'class-validator';
-import {
-  CashInService,
-  type CashInResponse,
-} from '../application/cash-in.service.js';
-import { CreateCashInDto } from './dto/create-cash-in.dto.js';
+import { IsUUID, validateSync } from 'class-validator';
+import { CashInService } from '../application/cash-in.service.ts';
+import type { CashInResponse } from '../application/responses/cash-in.response.ts';
+import { CreateCashInDto } from './dto/create-cash-in.dto.ts';
 
 class IdempotencyHeader {
   @IsUUID()

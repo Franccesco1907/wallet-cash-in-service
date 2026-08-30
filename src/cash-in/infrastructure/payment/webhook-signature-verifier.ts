@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { parseEnvironment } from '../../../config/environment.js';
+import { parseEnvironment } from '../../../config/environment.ts';
 
 @Injectable()
 export class WebhookSignatureVerifier {

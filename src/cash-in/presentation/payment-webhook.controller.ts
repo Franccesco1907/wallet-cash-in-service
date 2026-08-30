@@ -10,9 +10,9 @@ import {
 } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import type { Request } from 'express';
-import { CashInService } from '../application/cash-in.service.js';
-import { WebhookSignatureVerifier } from '../infrastructure/payment/webhook-signature-verifier.js';
-import { PaymentWebhookDto } from './dto/payment-webhook.dto.js';
+import { CashInService } from '../application/cash-in.service.ts';
+import { WebhookSignatureVerifier } from '../infrastructure/payment/webhook-signature-verifier.ts';
+import { PaymentWebhookDto } from './dto/payment-webhook.dto.ts';
 
 @Controller('webhooks/payment')
 export class PaymentWebhookController {

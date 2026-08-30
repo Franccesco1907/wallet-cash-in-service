@@ -1,6 +1,6 @@
 import { Transform } from 'class-transformer';
 import { IsIn, IsString, Matches, MaxLength } from 'class-validator';
-import { normalizeAmountInput } from '../../domain/money.js';
+import { normalizeAmountInput } from '../../domain/money.ts';
 
 export class CreateCashInDto {
   @IsString()

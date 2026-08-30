@@ -4,7 +4,7 @@ import {
   type ChargeInput,
   type ChargeResult,
   type PaymentProviderPort,
-} from '../../application/ports/payment-provider.port.js';
+} from '../../application/ports/payment-provider.port.ts';
 
 @Injectable()
 export class FakePaymentProvider implements PaymentProviderPort {
