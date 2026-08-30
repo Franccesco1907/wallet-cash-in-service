@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { Client } from 'pg';
 import request from 'supertest';
-import { FakePaymentProvider } from '../src/cash-in/infrastructure/payment/fake-payment-provider.adapter.js';
-import { createTestApp } from './test-app.js';
+import { FakePaymentProvider } from '../src/cash-in/infrastructure/payment/fake-payment-provider.adapter.ts';
+import { createTestApp } from './test-app.ts';
 
 const databaseUrl =
   process.env.DATABASE_URL ??
@@ -22,6 +22,7 @@ describe('successful cash-in', () => {
   it('credits the wallet once and replays the stored completed response', async () => {
     const app = await createTestApp();
     const key = randomUUID();
+    const correlationId = 'e2e-cash-in-success';
     const body = {
       user_id: 'usr_success',
       amount: '100.00',
@@ -31,10 +32,12 @@ describe('successful cash-in', () => {
     const first = await request(app.getHttpServer())
       .post('/cash-in')
       .set('Idempotency-Key', key)
+      .set('x-correlation-id', correlationId)
       .send(body);
     const replay = await request(app.getHttpServer())
       .post('/cash-in')
       .set('Idempotency-Key', key)
+      .set('x-correlation-id', correlationId)
       .send(body);
 
     const client = new Client({ connectionString: databaseUrl });
@@ -48,12 +51,15 @@ describe('successful cash-in', () => {
     await app.close();
 
     expect(first.status).toBe(200);
-    expect(first.body).toMatchObject({
+    expect(first.headers['x-correlation-id']).toBe(correlationId);
+    expect(first.body).toEqual({
+      operation_id: expect.any(String),
       status: 'completed',
       amount: 100,
       new_balance: 100,
     });
     expect(replay.status).toBe(200);
+    expect(replay.headers['x-correlation-id']).toBe(correlationId);
     expect(replay.body).toEqual(first.body);
     expect(ledger.rowCount).toBe(1);
     expect(wallet.rows[0]?.balance_minor).toBe('10000');
