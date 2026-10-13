@@ -1,128 +1,61 @@
 # Wallet Cash-In Service
 
-A focused NestJS service demonstrating multi-pod idempotency, safe wallet credits, uncertain payment handling, and authenticated webhooks. PostgreSQL—not process memory or a distributed lock—is the financial authority.
+NestJS cash-in demo with PostgreSQL-enforced idempotency, atomic wallet credits, uncertain-payment reconciliation and authenticated webhooks. The provider is a deterministic fake, not a production payment integration.
 
-## Quick start
+## Run and verify
 
-Requirements: Node.js 24+, npm, and Docker Compose.
+Requires Node.js 24+, npm and Docker Compose. Migration scripts use POSIX environment assignment (use a POSIX shell or WSL on Windows).
 
-```bash
+```sh
 npm ci
 docker compose -f compose.test.yaml up -d --wait
 npm run migration:run:test
 npm run test:all
+npm run format:check
+npm run lint
+npm run build
 ```
 
-Set `DATABASE_URL` and `WEBHOOK_SECRET` before `npm run start:dev`. Tear down tests with `docker compose -f compose.test.yaml down -v`.
+For development run `npm run start:dev`. See [.env.example](.env.example) and [.env.test.example](.env.test.example): local defaults use port 3000, test PostgreSQL on 55432 and a development webhook secret. Production requires explicit DATABASE_URL and WEBHOOK_SECRET (at least 16 characters). Configuration uses class-validator/class-transformer. Never commit real environment files.
 
-## HTTP contracts
+Only for the disposable test database, `docker compose -f compose.test.yaml down -v` removes its volume.
 
-### `POST /cash-in`
+## HTTP contract
 
-Requires `Idempotency-Key: <UUID>`.
+`POST /cash-in` requires `Idempotency-Key: <UUID>` and a body such as:
 
 ```json
-{
-  "user_id": "usr_abc123",
-  "amount": 100.00,
-  "currency": "PEN",
-  "payment_method": "fake_success"
-}
+{"user_id":"usr_abc123","amount":100.00,"currency":"PEN","payment_method":"fake_success"}
 ```
 
-| Result | HTTP | Meaning |
-|---|---:|---|
-| `completed` | 200 | Confirmed once; stored balance is replayable |
-| `awaiting_confirmation` | 202 | Provider outcome is unknown; no blind second charge |
-| `failed` | 422 | Confirmed rejection; stable error is replayed |
-| key conflict | 409 | UUID belongs to another normalized request |
+| HTTP | Meaning |
+| --- | --- |
+| 200 | completed; replay includes the stored balance |
+| 202 | awaiting_confirmation; no blind second charge |
+| 422 | confirmed failure, replayable |
+| 409 | key belongs to a different normalized request |
 
-The challenge's numeric `amount` contract is supported from `0.01` through `1,000,000.00`; exact decimal strings are also accepted as an extension. This bound keeps conversion to integer cents exact after numeric normalization. Values with fractional cents or above the maximum return `400`. `amount` and `new_balance` are numeric only when the JSON number round-trips through exact decimal parsing to the original stored cents. Otherwise, the serializer returns canonical decimal text rather than a rounded number.
+Amounts accept numbers or exact decimal strings from 0.01 through 1,000,000.00. Fractional cents and larger amounts return 400. Responses use numeric amount/new_balance only when exact cent round-trip succeeds; otherwise they use canonical decimal strings. Fake methods: fake_success, fake_decline, fake_timeout and test-controlled fake_delayed.
 
-The deterministic fake accepts `fake_success`, `fake_decline`, `fake_timeout`, and test-controlled `fake_delayed`. These are test scenarios, not a production provider contract.
-
-### `POST /webhooks/payment`
-
-Requires `X-Webhook-Signature`, a hexadecimal HMAC-SHA256 of the exact raw body using `WEBHOOK_SECRET`.
+`POST /webhooks/payment` requires `X-Webhook-Signature`: hex HMAC-SHA256 of the exact raw body using WEBHOOK_SECRET.
 
 ```json
-{
-  "event_id": "evt_1",
-  "operation_id": "1e049f36-90e7-4bf8-a8f3-31efad401fd8",
-  "type": "payment.succeeded",
-  "sequence": 2,
-  "provider_payment_id": "pay_1"
-}
+{"event_id":"evt_1","operation_id":"1e049f36-90e7-4bf8-a8f3-31efad401fd8","type":"payment.succeeded","sequence":2,"provider_payment_id":"pay_1"}
 ```
 
-The supported event types are `payment.succeeded` and `payment.failed`; failure events may include `failure_code`. Valid identical duplicates and old events receive `202`. Reusing an event ID with changed immutable identity returns `409`. Invalid signatures receive `401` before business processing.
+Types are payment.succeeded and payment.failed (optional failure_code). Identical duplicates/old events receive 202; changed immutable event identity returns 409; invalid signatures return 401 before processing. Sequence accepts safe positive JSON integers or decimal digit strings through PostgreSQL BIGINT (9223372036854775807); unsafe numeric literals/larger strings return 400.
 
-`sequence` accepts safe positive JSON integers for convenience. Values above `Number.MAX_SAFE_INTEGER` must be sent as decimal digit strings so the signed raw payload remains exact. The maximum is PostgreSQL `BIGINT` (`9223372036854775807`); unsafe numeric literals and larger strings return `400` instead of being rounded.
+## Invariants and boundaries
 
-## Architecture
+- Controllers call CashInService through persistence/provider ports. Keep dependencies inward and TypeORM synchronize false; schema changes use migrations.
+- Normalize to integer minor units and canonical SHA-256 fingerprints. PostgreSQL uniqueness elects one provider-call owner and rejects key conflicts before provider access.
+- Finalization locks the operation, inserts one unique ledger credit, atomically increments the wallet, stores the resulting balance and completes the operation in one transaction. No provider call occurs inside it; serialization/deadlock failures get one bounded retry.
+- A timeout preserves AWAITING_CONFIRMATION. Replays use one bounded status lookup and no new provider key. CREATED may be claimed after restart; PAYMENT_REQUESTED is reconciled. Without provider idempotency/canonical lookup, safety requires waiting rather than promising exactly-once external charging.
+- Webhooks persist immutable event identity (operation, provider payment, type, sequence and payload hash); older sequences are ignored, terminal states cannot be rewritten, and success shares the transactional finalizer.
+- Never log raw idempotency keys, payment tokens, secrets or full webhook bodies. Correlation IDs are distinct from idempotency keys.
 
-```mermaid
-flowchart LR
-  HTTP[Controllers] --> APP[CashInService]
-  APP --> STORE[CashInStorePort]
-  APP --> PROVIDER[PaymentProviderPort]
-  STORE --> PG[(PostgreSQL)]
-  PROVIDER --> FAKE[Deterministic fake provider]
-```
+Unit tests cover policies/validation; integration and E2E suites require real PostgreSQL for migration and concurrency proof. The five-instance E2E harness uses same-process Nest applications, not deployed pods. Run `npm run test:cov` for diagnostic unit coverage; database suites use Vitest --no-file-parallelism, not Jest --runInBand. Verify migration up/down/up for schema changes.
 
-This is pragmatic Hexagonal Architecture. Ports exist only for volatile persistence and provider boundaries. There is no generic repository, command bus, CQRS layer, or framework-level Saga.
+No refunds, chargebacks, FX, reconciliation scheduler, real provider networking, metrics export or load-test guarantee. Redis is only a possible cache; Saga requires autonomous services/compensation; broker/outbox is deferred until cross-service delivery exists.
 
-## Correctness model
-
-### Idempotency and multiple pods
-
-The request becomes integer minor units and fixed-field canonical data, then SHA-256. `INSERT ... ON CONFLICT DO NOTHING` against the unique key elects exactly one provider-call owner. Replays compare fingerprints before provider access. Unique constraints protect provider request, ledger operation, and provider event IDs.
-
-### Money and concurrency
-
-Persisted money uses `BIGINT`, and each Cash-In is bounded to `1,000,000.00`. Successful finalization locks the operation, inserts its unique ledger entry, atomically upserts `wallets.balance_minor = current + credit`, stores the resulting balance, and completes the operation in one transaction. Provider calls never occur inside it. PostgreSQL deadlock/serialization failures receive one bounded retry. The response serializer preserves the challenge's numeric fields whenever exact cent round-trip proof succeeds and deterministically falls back to decimal text otherwise.
-
-### Unknown outcomes
-
-A timeout or thrown transport error is `AWAITING_CONFIRMATION`, not failure. Retries receive the same operation, perform one bounded idempotent status lookup, and do not create a new provider request. A `CREATED` operation left by a restart can be claimed atomically; a `PAYMENT_REQUESTED` operation is reconciled rather than blindly charged. If a provider offers neither idempotent requests nor canonical lookup, no service can guarantee both availability and no duplicate external charge; this service chooses safety and waits for reconciliation.
-
-### Webhooks
-
-HMAC verification uses the raw body. Events are serialized, persisted once, and compared with the latest operation sequence and immutable identity fields. Duplicate IDs are acknowledged only when operation, provider payment, type, sequence, and payload hash match. Older sequences are retained as ignored. Success shares the synchronous transactional finalizer; confirmed failure moves `PAYMENT_REQUESTED` or `AWAITING_CONFIRMATION` to `FAILED`. Terminal states cannot be rewritten by contradictory late events.
-
-## Database and configuration
-
-- TypeORM owns connections/migrations; parameterized SQL protects critical invariants.
-- `synchronize: false` is mandatory.
-- Zod 4 validates configuration at bootstrap.
-- The explicit migration is tested up/down/up.
-- `.env.example` contains placeholders only. Production requires explicit `DATABASE_URL` and `WEBHOOK_SECRET`; defaults exist only for development/test.
-
-## Verification
-
-| Suite | Command | Boundary |
-|---|---|---|
-| Unit | `npm run test:unit` | states, money, fingerprint |
-| Integration | `npm run test:integration` | migration and real PostgreSQL concurrency |
-| E2E | `npm run test:e2e` | HTTP, multi-instance arbitration, provider, webhook |
-| Coverage | `npm run test:cov` | diagnostic unit coverage |
-| Quality | `npm run format:check && npm run lint && npm run build` | static gates |
-
-Database suites use Vitest `--no-file-parallelism`; `--runInBand` is an unsupported Jest option.
-
-## Guarantees and limitations
-
-Guaranteed locally: one owner per key across pods, one ledger credit per operation, lost-update-safe balance changes, terminal/uncertain replay, and authenticated duplicate/order-aware webhooks.
-
-Not claimed: distributed exactly-once charging by an arbitrary provider, refunds, chargebacks, FX, reconciliation scheduling, production provider networking, metrics export, or load testing.
-
-Redis may later be a cache/duplicate shield, never the financial authority. Saga becomes relevant only if Payment and Wallet become autonomous services with durable messaging and real compensation. Broker/outbox is deferred until cross-service delivery exists.
-
-## Defense notes
-
-- Multi-pod ownership is arbitrated by PostgreSQL, not memory. The e2e harness uses five same-process Nest application instances to approximate independent pods; the database constraint and transactional claim are the actual cross-process invariant.
-- Timeout preserves uncertainty because a new provider key could charge twice.
-- Ledger uniqueness protects credit regardless of webhook delivery count.
-- At one million operations/day, evaluate partitioning/retention, pool budgets, async reconciliation, outbox, rate limits, and measured cache pressure.
-
-Review [`docs/tdd-evidence.md`](docs/tdd-evidence.md), [`docs/ai-assistance.md`](docs/ai-assistance.md), and [`docs/challenge.md`](docs/challenge.md).
+[Challenge](docs/challenge.md), [historical TDD evidence](docs/tdd-evidence.md), and [AI assistance decisions](docs/ai-assistance.md) retain the original requirements and implementation evidence. See [AGENTS.md](AGENTS.md) for change rules.
